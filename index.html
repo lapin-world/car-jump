@@ -32,6 +32,7 @@
   }
   #rank[hidden] { display: none; }
   #rank form { display: flex; gap: 8px; margin-bottom: 10px; }
+  #rank form[hidden] { display: none; } /* display:flex 가 hidden 속성을 덮어쓰지 않게 */
   #rank input {
     flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #475569; border-radius: 8px;
     background: #0f172a; color: #f8fafc; font: inherit; user-select: text; -webkit-user-select: text;
