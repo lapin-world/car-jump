@@ -81,7 +81,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.2';
+const VERSION = '2026-10-22.3';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1088,11 +1088,12 @@ const VERSION = '2026-10-22.2';
       ctx.fillText('Kakao Taxi Jump', W / 2, H * 0.3);
       ctx.font = '16px system-ui, sans-serif';
       ctx.fillText('Enter / Space / 탭으로 점프', W / 2, H * 0.3 + 32);
-      ctx.fillText('길게 누르면 더 높이, 더 멀리!', W / 2, H * 0.3 + 54);
-      ctx.fillText('차 위를 아슬아슬하게 넘으면 보너스', W / 2, H * 0.3 + 76);
+      ctx.fillText('테슬라를 뛰어 넘어라 !', W / 2, H * 0.3 + 54);
+      ctx.fillText('길게 누르면 더 높이, 더 멀리!', W / 2, H * 0.3 + 80);
+      ctx.fillText('차 위를 아슬아슬하게 넘으면 보너스', W / 2, H * 0.3 + 102);
       if (shakeOn) {
         ctx.fillStyle = '#fbbf24';
-        ctx.fillText('폰을 위로 툭 튕기면 점프! (화면 회전 잠금 권장)', W / 2, H * 0.3 + 102);
+        ctx.fillText('폰을 위로 툭 튕기면 점프! (화면 회전 잠금 권장)', W / 2, H * 0.3 + 128);
       }
     } else if (state === 'over') {
       ctx.font = 'bold 32px system-ui, sans-serif';
