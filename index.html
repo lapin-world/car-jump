@@ -81,7 +81,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.3';
+const VERSION = '2026-10-22.4';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1084,6 +1084,13 @@ const VERSION = '2026-10-22.3';
 
     ctx.textAlign = 'center';
     if (state === 'ready') {
+      // 시작 화면 좌측 상단 버전 표기
+      ctx.textAlign = 'left';
+      ctx.font = '12px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(148,163,184,0.8)';
+      ctx.fillText(`v${VERSION}`, 16, 24);
+      ctx.fillStyle = '#f8fafc';
+      ctx.textAlign = 'center';
       ctx.font = 'bold 32px system-ui, sans-serif';
       ctx.fillText('Kakao Taxi Jump', W / 2, H * 0.3);
       ctx.font = '16px system-ui, sans-serif';
