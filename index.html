@@ -25,7 +25,7 @@
   canvas { display: block; width: 100vw; height: 100vh; }
   /* 게임 오버 시 랭킹 패널 */
   #rank {
-    position: fixed; left: 50%; top: calc(30% + 48px); transform: translateX(-50%);
+    position: fixed; left: 50%; top: 40%; transform: translateX(-50%); overflow-y: auto; /* top·max-height 는 JS(layoutOver)에서 문구 아래로 맞춤 */
     width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 14px 16px;
     border: 1px solid rgba(148,197,255,0.4); border-radius: 14px;
     background: rgba(15,23,42,0.9); color: #f8fafc; font: 14px system-ui, sans-serif;
@@ -73,7 +73,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.10';
+const VERSION = '2026-10-22.11';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1135,19 +1135,34 @@ const VERSION = '2026-10-22.10';
       ctx.fillText(`v${VERSION}`, 16, 24);
       drawStartScreen(W, H);
     } else if (state === 'over') {
+      const y = layoutOver(H);
       ctx.font = 'bold 32px system-ui, sans-serif';
-      ctx.fillText('CRASH!', W / 2, H * 0.3);
+      ctx.fillText('CRASH!', W / 2, y);
       ctx.font = '16px system-ui, sans-serif';
-      ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', W / 2, H * 0.3 + 32);
+      ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', W / 2, y + 32);
       // 길게 누르는 동안 진행 막대
       if (restartHold !== null) {
         const t = Math.min(1, (clock - restartHold) / RESTART_HOLD);
         ctx.fillStyle = 'rgba(148,163,184,0.3)';
-        ctx.fillRect(W / 2 - 80, H * 0.3 + 40, 160, 4);
+        ctx.fillRect(W / 2 - 80, y + 42, 160, 4);
         ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(W / 2 - 80, H * 0.3 + 40, 160 * t, 4);
+        ctx.fillRect(W / 2 - 80, y + 42, 160 * t, 4);
       }
     }
+  }
+
+  // 게임 오버 문구(캔버스)와 랭킹 패널(HTML)이 겹치지 않게 배치.
+  // 문구 기준선 y 를 정하고 패널은 그 아래(y + 58)에 두며, 화면이 낮으면 문구를 올리고 패널은 스크롤
+  let rankTop = -1;
+  function layoutOver(H) {
+    const panelH = rankEl.hidden ? 0 : rankEl.scrollHeight;
+    const y = Math.round(Math.max(48, Math.min(H * 0.3, H - panelH - 70)));
+    if (y + 58 !== rankTop) {
+      rankTop = y + 58;
+      rankEl.style.top = `${rankTop}px`;
+      rankEl.style.maxHeight = `${Math.max(120, H - rankTop - 12)}px`;
+    }
+    return y;
   }
 
   function draw() {
