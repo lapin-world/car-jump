@@ -71,7 +71,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.7';
+const VERSION = '2026-10-22.8';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -541,6 +541,37 @@ const VERSION = '2026-10-22.7';
     ctx.restore();
   }
 
+  // 빌딩 높이는 도로 높이(groundY) 대비 비율. 시작 화면 문구를 가리지 않는 범위로 제한
+  function makeSkyline(seed, minW, maxW, minH, maxH) {
+    let v = seed;
+    const r = () => (v = (v * 16807) % 2147483647) / 2147483647;
+    const list = [];
+    let x = 0;
+    while (x < 3000) {
+      const w = minW + r() * (maxW - minW);
+      list.push({ x, w, h: minH + r() * (maxH - minH), step: r() < 0.3 ? 0.3 + r() * 0.3 : 0 });
+      x += w + r() * 10;
+    }
+    return { list, total: x };
+  }
+  const cityFar = makeSkyline(11, 50, 110, 0.08, 0.2);
+  const cityNear = makeSkyline(23, 60, 130, 0.1, 0.28);
+
+  function drawSkyline(row, parallax, color) {
+    ctx.fillStyle = color;
+    const shift = (distance * parallax) % row.total;
+    for (let base = -shift; base < W; base += row.total) {
+      for (const b of row.list) {
+        const x = base + b.x;
+        if (x > W || x + b.w < 0) continue;
+        const h = groundY * b.h;
+        ctx.fillRect(x, groundY - h, b.w, h);
+        // 일부 빌딩은 계단식 옥상
+        if (b.step) ctx.fillRect(x + b.w * 0.25, groundY - h - groundY * 0.03, b.w * b.step, groundY * 0.03);
+      }
+    }
+  }
+
   function drawBackground() {
     const sky = ctx.createLinearGradient(0, 0, 0, groundY);
     sky.addColorStop(0, '#01030a');
@@ -553,42 +584,18 @@ const VERSION = '2026-10-22.7';
 
     drawMoon();
 
-    // 원경 투광등 타워 + 하늘로 뻗는 빛기둥
+    // 검정 빌딩 실루엣 (창문·조명 없음, 하늘보다 살짝 어두운 2단)
+    drawSkyline(cityFar, 0.1, '#070b16');
+    drawSkyline(cityNear, 0.25, '#03050b');
+
+    // 원경 가로등: 눈부시지 않게 작고 희미한 주황 전구만 (빛기둥·노면 빛 없음)
     for (const x of repeatX(560, 0.15, 0)) {
       const top = groundY - 120;
-      const beam = ctx.createLinearGradient(0, 0, 0, top);
-      beam.addColorStop(0, 'rgba(148,197,255,0)');
-      beam.addColorStop(1, 'rgba(148,197,255,0.08)');
-      ctx.fillStyle = beam;
-      ctx.beginPath();
-      ctx.moveTo(x - 4, top);
-      ctx.lineTo(x - 30, 0);
-      ctx.lineTo(x + 30, 0);
-      ctx.lineTo(x + 4, top);
-      ctx.fill();
       ctx.fillStyle = '#111827';
       ctx.fillRect(x - 1.5, top, 3, 120);
-      glow(x, top, 60, '186,230,253', 0.35);
-      ctx.fillStyle = '#f0f9ff';
-      ctx.beginPath(); ctx.arc(x, top, 3.5, 0, Math.PI * 2); ctx.fill();
-    }
-
-    // 점프 램프(곡선 구조물) 실루엣
-    for (const x of repeatX(1500, 0.4, 300)) {
-      ctx.strokeStyle = '#1e293b';
-      ctx.lineWidth = 10;
-      ctx.beginPath();
-      ctx.arc(x + 120, groundY, 110, Math.PI, Math.PI * 1.5);
-      ctx.stroke();
-      ctx.strokeStyle = '#334155';
-      ctx.lineWidth = 1;
-      for (let a = 0; a <= 1; a += 0.125) {
-        const ang = Math.PI + a * Math.PI * 0.5;
-        ctx.beginPath();
-        ctx.moveTo(x + 120 + Math.cos(ang) * 110, groundY + Math.sin(ang) * 110);
-        ctx.lineTo(x + 120 + Math.cos(ang) * 110, groundY);
-        ctx.stroke();
-      }
+      glow(x, top, 18, '253,186,116', 0.08);
+      ctx.fillStyle = 'rgba(253,230,138,0.3)';
+      ctx.beginPath(); ctx.arc(x, top, 2, 0, Math.PI * 2); ctx.fill();
     }
 
     // 전신주 + 전선
@@ -620,7 +627,6 @@ const VERSION = '2026-10-22.7';
     // 도로
     ctx.fillStyle = '#0c0f16';
     ctx.fillRect(0, groundY, W, H - groundY);
-    for (const x of repeatX(560, 0.15, 0)) glow(x, groundY + 30, 90, '186,230,253', 0.07);
     ctx.fillStyle = '#334155';
     const dash = distance % 60;
     for (let x = -dash; x < W; x += 60) ctx.fillRect(x, groundY + 22, 30, 3);
