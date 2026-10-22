@@ -71,7 +71,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.5';
+const VERSION = '2026-10-22.6';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -483,14 +483,7 @@ const VERSION = '2026-10-22.5';
     }
   });
 
-  // ---------- 배경: 영상 속 야간 시연장 ----------
-
-  function repeatX(spacing, parallax, offset) {
-    const xs = [];
-    const shift = (distance * parallax + offset) % spacing;
-    for (let x = -shift - spacing; x < W + spacing; x += spacing) xs.push(x);
-    return xs;
-  }
+  // ---------- 배경 ----------
 
   function glow(x, y, r, rgb, a) {
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
@@ -541,10 +534,82 @@ const VERSION = '2026-10-22.5';
     ctx.restore();
   }
 
+  // ---------- 시티팝 도심 (미드나잇 네온) ----------
+  // 빌딩 줄은 시드 고정 난수로 한 번 만들고, 창문까지 그린 빌딩 이미지를 미리 만들어 매 프레임 재사용
+  const NEON = ['255,79,163', '56,232,255']; // 핑크, 민트
+  let cityFar, cityNear;
+
+  function seeded(seed) {
+    return () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  }
+
+  function buildingSprite(w, h, body, win, density, seed) {
+    const scale = dpr * viewScale;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(w * scale);
+    c.height = Math.ceil(h * scale);
+    const g = c.getContext('2d');
+    g.scale(scale, scale);
+    g.fillStyle = body;
+    g.fillRect(0, 0, w, h);
+    const r = seeded(seed);
+    g.fillStyle = win;
+    for (let y = 12; y < h - 10; y += 14) {
+      for (let x = 8; x < w - 12; x += 12) {
+        if (r() > density) continue;
+        g.globalAlpha = 0.45 + r() * 0.5;
+        g.fillRect(x, y, 6, 7);
+      }
+    }
+    return c;
+  }
+
+  // minH·maxH 는 도로 높이(groundY) 대비 비율. 시작 화면 제목·안내 문구를 가리지 않는 높이로 제한
+  function buildCityRow(seed, minW, maxW, minH, maxH, body, win, density, withProps) {
+    const r = seeded(seed);
+    const list = [];
+    let x = 0;
+    while (x < 3200) {
+      const w = minW + r() * (maxW - minW);
+      const h = groundY * (minH + r() * (maxH - minH));
+      const b = { x, w, h, img: buildingSprite(w, h, body, win, density, Math.floor(r() * 1e6) + 1) };
+      if (withProps) {
+        const p = r();
+        if (p < 0.4) b.antenna = 14 + r() * 26;
+        // 네온 간판: 위치·색·깜빡임 박자
+        if (r() < 0.45) b.sign = { color: NEON[r() < 0.55 ? 0 : 1], y: 30 + r() * Math.max(10, h * 0.5), w: Math.min(w - 16, 40 + r() * 20), phase: r() * 10 };
+      }
+      list.push(b);
+      x += w + 4 + r() * 12;
+    }
+    return { list, total: x };
+  }
+
+  function buildCity() {
+    cityFar = buildCityRow(11, 40, 90, 0.1, 0.22, '#2b1850', '#fbcfe8', 0.18, false);
+    cityNear = buildCityRow(23, 56, 110, 0.14, 0.3, '#150b2c', '#fde68a', 0.3, true);
+  }
+
+  function eachBuilding(row, parallax, fn) {
+    const shift = (distance * parallax) % row.total;
+    for (let base = -shift; base < W; base += row.total) {
+      for (const b of row.list) {
+        const x = base + b.x;
+        if (x < W && x + b.w > 0) fn(b, x);
+      }
+    }
+  }
+
+  // 네온 간판 깜빡임: 대부분 켜져 있고 가끔 꺼짐
+  function signOn(b) {
+    return Math.sin(clock * 7 + b.sign.phase * 13) > -0.85;
+  }
+
   function drawBackground() {
     const sky = ctx.createLinearGradient(0, 0, 0, groundY);
-    sky.addColorStop(0, '#01030a');
-    sky.addColorStop(1, '#0b1324');
+    sky.addColorStop(0, '#07051a');
+    sky.addColorStop(0.6, '#24104a');
+    sky.addColorStop(1, '#5b1d6e');
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, W, groundY);
 
@@ -553,78 +618,56 @@ const VERSION = '2026-10-22.5';
 
     drawMoon();
 
-    // 원경 투광등 타워 + 하늘로 뻗는 빛기둥
-    for (const x of repeatX(560, 0.15, 0)) {
-      const top = groundY - 120;
-      const beam = ctx.createLinearGradient(0, 0, 0, top);
-      beam.addColorStop(0, 'rgba(148,197,255,0)');
-      beam.addColorStop(1, 'rgba(148,197,255,0.08)');
-      ctx.fillStyle = beam;
-      ctx.beginPath();
-      ctx.moveTo(x - 4, top);
-      ctx.lineTo(x - 30, 0);
-      ctx.lineTo(x + 30, 0);
-      ctx.lineTo(x + 4, top);
-      ctx.fill();
-      ctx.fillStyle = '#111827';
-      ctx.fillRect(x - 1.5, top, 3, 120);
-      glow(x, top, 60, '186,230,253', 0.35);
-      ctx.fillStyle = '#f0f9ff';
-      ctx.beginPath(); ctx.arc(x, top, 3.5, 0, Math.PI * 2); ctx.fill();
-    }
+    // 지평선 핑크 빛무리
+    glow(W / 2, groundY, Math.max(W, groundY) * 0.8, '255,77,166', 0.16);
 
-    // 점프 램프(곡선 구조물) 실루엣
-    for (const x of repeatX(1500, 0.4, 300)) {
-      ctx.strokeStyle = '#1e293b';
-      ctx.lineWidth = 10;
-      ctx.beginPath();
-      ctx.arc(x + 120, groundY, 110, Math.PI, Math.PI * 1.5);
-      ctx.stroke();
-      ctx.strokeStyle = '#334155';
-      ctx.lineWidth = 1;
-      for (let a = 0; a <= 1; a += 0.125) {
-        const ang = Math.PI + a * Math.PI * 0.5;
-        ctx.beginPath();
-        ctx.moveTo(x + 120 + Math.cos(ang) * 110, groundY + Math.sin(ang) * 110);
-        ctx.lineTo(x + 120 + Math.cos(ang) * 110, groundY);
-        ctx.stroke();
-      }
-    }
+    // 원경 빌딩
+    eachBuilding(cityFar, 0.15, (b, x) => ctx.drawImage(b.img, x, groundY - b.h, b.w, b.h));
 
-    // 전신주 + 전선
-    const poles = repeatX(320, 0.6, 100);
-    ctx.strokeStyle = 'rgba(100,116,139,0.35)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < poles.length - 1; i++) {
-      const a = poles[i], b = poles[i + 1];
-      for (const dy of [0, 8]) {
-        ctx.beginPath();
-        ctx.moveTo(a, groundY - 150 + dy);
-        ctx.quadraticCurveTo((a + b) / 2, groundY - 130 + dy, b, groundY - 150 + dy);
-        ctx.stroke();
+    // 근경 빌딩 + 옥상 경고등 + 네온 간판
+    eachBuilding(cityNear, 0.4, (b, x) => {
+      const top = groundY - b.h;
+      ctx.drawImage(b.img, x, top, b.w, b.h);
+      if (b.antenna) {
+        ctx.fillStyle = '#150b2c';
+        ctx.fillRect(x + b.w / 2 - 1.5, top - b.antenna, 3, b.antenna);
+        if (Math.sin(clock * 3 + b.x) > 0) {
+          glow(x + b.w / 2, top - b.antenna, 10, '239,68,68', 0.7);
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(x + b.w / 2 - 2.5, top - b.antenna - 2, 5, 5);
+        }
       }
-    }
-    for (const x of poles) {
-      ctx.fillStyle = '#1f2937';
-      ctx.fillRect(x - 2, groundY - 155, 4, 155);
-      ctx.fillRect(x - 14, groundY - 150, 28, 3);
-    }
+      if (b.sign && signOn(b)) {
+        const sx = x + (b.w - b.sign.w) / 2, sy = top + b.sign.y;
+        glow(sx + b.sign.w / 2, sy + 8, b.sign.w, b.sign.color, 0.4);
+        ctx.strokeStyle = `rgb(${b.sign.color})`;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(sx, sy, b.sign.w, 16);
+      }
+    });
 
     // 지면 안개
     const haze = ctx.createLinearGradient(0, groundY - 40, 0, groundY);
-    haze.addColorStop(0, 'rgba(148,163,184,0)');
-    haze.addColorStop(1, 'rgba(148,163,184,0.12)');
+    haze.addColorStop(0, 'rgba(244,114,182,0)');
+    haze.addColorStop(1, 'rgba(244,114,182,0.1)');
     ctx.fillStyle = haze;
     ctx.fillRect(0, groundY - 40, W, 40);
 
-    // 도로
-    ctx.fillStyle = '#0c0f16';
+    // 도로 + 젖은 노면에 비친 네온
+    ctx.fillStyle = '#0d0718';
     ctx.fillRect(0, groundY, W, H - groundY);
-    for (const x of repeatX(560, 0.15, 0)) glow(x, groundY + 30, 90, '186,230,253', 0.07);
-    ctx.fillStyle = '#334155';
+    eachBuilding(cityNear, 0.4, (b, x) => {
+      if (!b.sign || !signOn(b)) return;
+      const ref = ctx.createLinearGradient(0, groundY, 0, H);
+      ref.addColorStop(0, `rgba(${b.sign.color},0.2)`);
+      ref.addColorStop(1, `rgba(${b.sign.color},0)`);
+      ctx.fillStyle = ref;
+      ctx.fillRect(x + b.w / 2 - 10, groundY, 20, H - groundY);
+    });
+    ctx.fillStyle = 'rgba(255,79,163,0.75)';
     const dash = distance % 60;
     for (let x = -dash; x < W; x += 60) ctx.fillRect(x, groundY + 22, 30, 3);
-    ctx.fillStyle = '#1e293b';
+    ctx.fillStyle = '#1e1433';
     ctx.fillRect(0, groundY, W, 2);
   }
 
@@ -1132,9 +1175,10 @@ const VERSION = '2026-10-22.5';
     requestAnimationFrame(loop);
   }
 
-  window.addEventListener('resize', () => { resize(); buildSprites(); });
+  window.addEventListener('resize', () => { resize(); buildSprites(); buildCity(); });
   resize();
   buildSprites();
+  buildCity();
   reset();
   requestAnimationFrame(loop);
 })();
