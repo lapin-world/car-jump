@@ -75,7 +75,7 @@
 <canvas id="game"></canvas>
 <div id="rank" hidden>
   <form id="rank-form">
-    <input id="rank-name" maxlength="12" placeholder="이름 (최대 12자)" autocomplete="off">
+    <input id="rank-name" maxlength="20" placeholder="이름 (최대 12자)" autocomplete="off">
     <button type="submit">등록</button>
   </form>
   <p class="msg" id="rank-msg"></p>
@@ -84,7 +84,7 @@
 <div id="rank-side" hidden></div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.13';
+const VERSION = '2026-10-22.14';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -503,21 +503,29 @@ const VERSION = '2026-10-22.13';
 
   rankForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const name = rankName.value.trim().slice(0, 12);
+    // 이름은 12자까지지만, 랭킹 초기화 문구(DB 에서만 판별)를 위해 입력은 20자까지 받아 그대로 전달
+    const name = rankName.value.trim().slice(0, 20);
     if (!name || submittedScore || !canSubmit(score)) return;
     submittedScore = true;
     rankForm.querySelector('button').disabled = true;
-    try { localStorage.setItem('roadster-name', name); } catch {}
     try {
-      // 같은 이름은 한 줄만 유지하고 최고 점수만 갱신 (DB 함수 submit_score)
-      await api('rpc/submit_score', { method: 'POST', body: JSON.stringify({ p_name: name, p_score: score }) });
+      // 같은 이름은 한 줄만 유지하고 최고 점수만 갱신 (DB 함수 submit_score). 'reset' 이면 랭킹 초기화됨
+      const result = await api('rpc/submit_score', { method: 'POST', body: JSON.stringify({ p_name: name, p_score: score }) });
       rankForm.hidden = true;
       rankName.blur();
+      if (result === 'reset') {
+        rankName.value = '';
+        try { localStorage.removeItem('roadster-name'); } catch {}
+        await loadRanking();
+        rankMsg.textContent = '랭킹이 초기화됐어요. 새로운 영웅을 기다려요!';
+        return;
+      }
+      try { localStorage.setItem('roadster-name', name); } catch {}
       await loadRanking();
     } catch {
       submittedScore = false;
       rankForm.querySelector('button').disabled = false;
-      rankMsg.textContent = '등록에 실패했어요. 다시 시도해 주세요';
+      rankMsg.textContent = name.length > 12 ? '이름은 12자까지 쓸 수 있어요' : '등록에 실패했어요. 다시 시도해 주세요';
     }
   });
 
