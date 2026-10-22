@@ -401,7 +401,8 @@
     rankForm.querySelector('button').disabled = true;
     try { localStorage.setItem('roadster-name', name); } catch {}
     try {
-      await api('scores', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ name, score }) });
+      // 같은 이름은 한 줄만 유지하고 최고 점수만 갱신 (DB 함수 submit_score)
+      await api('rpc/submit_score', { method: 'POST', body: JSON.stringify({ p_name: name, p_score: score }) });
       rankForm.hidden = true;
       rankName.blur();
       await loadRanking();
