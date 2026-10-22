@@ -81,7 +81,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.1';
+const VERSION = '2026-10-22.2';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -98,8 +98,6 @@ const VERSION = '2026-10-22.1';
   // 탭: 최고 약 186px·체공 0.9초 / 길게: 최고 약 333px·체공 1.26초
   const HOLD_GRAVITY = 0.4;
   const HOLD_MAX = 0.35;
-  const PLAYER_H = 50;      // 드론 충돌 판정용 차체 높이
-  const DRONE_ALT = 255;    // 드론 아래쪽 높이: 탭 점프는 아래로 통과, 길게 누르면 충돌
   const NEAR_MISS = 16;     // 차량 위를 이 높이(px) 이내로 스치면 '아슬아슬'
   const MAX_COMBO_BONUS = 3;
 
@@ -288,10 +286,10 @@ const VERSION = '2026-10-22.1';
   }
 
   function addCar(type, x) {
-    obstacles.push({ kind: 'car', type, w: type.w, h: type.h, x, passed: false, minClear: Infinity });
+    obstacles.push({ type, w: type.w, h: type.h, x, passed: false, minClear: Infinity });
   }
 
-  // 장애물 패턴: 단일 차량 / 차량 위 드론(탭만) / 2~3대 연속(길게 누르기)
+  // 장애물 패턴: 단일 차량 / 2~3대 연속(길게 누르기)
   // 연속 차량은 길게 누른 점프로 넘을 수 있는 속도 구간에서만 등장. 반환값은 다음 생성까지 추가 대기 시간
   function spawnObstacle() {
     const x0 = W + 40;
@@ -304,10 +302,6 @@ const VERSION = '2026-10-22.1';
       const type = randomType();
       addCar(type, x);
       x += type.w + 30;
-    }
-    if (count === 1 && speed >= 420 && Math.random() < 0.3) {
-      const car = obstacles[obstacles.length - 1];
-      obstacles.push({ kind: 'drone', w: 70, h: 26, x: car.x + car.w / 2 - 35, alt: DRONE_ALT, passed: false });
     }
     return count > 1 ? (x - 30 - x0) / speed + 0.45 : 0;
   }
@@ -381,14 +375,10 @@ const VERSION = '2026-10-22.1';
       o.x -= speed * dt;
       if (!o.passed && o.x + o.w < player.x - 45) {
         o.passed = true;
-        if (o.kind === 'drone') {
-          score += 1;
-        } else {
-          score += o.type.points;
-          if (!player.onGround) {
-            player.jumpClears++;
-            if (o.minClear < NEAR_MISS) player.jumpNear++;
-          }
+        score += o.type.points;
+        if (!player.onGround) {
+          player.jumpClears++;
+          if (o.minClear < NEAR_MISS) player.jumpNear++;
         }
       }
     }
@@ -399,13 +389,6 @@ const VERSION = '2026-10-22.1';
     const px1 = player.x - half, px2 = player.x + half;
     const pBottom = groundY - player.y;
     for (const o of obstacles) {
-      if (o.kind === 'drone') {
-        if (px2 > o.x && px1 < o.x + o.w && player.y + PLAYER_H > o.alt && player.y < o.alt + o.h) {
-          gameOver();
-          break;
-        }
-        continue;
-      }
       // 이미지 여백을 감안해 좌우 8%, 위쪽 hitTop 비율만큼 판정 제외
       const oTop = groundY - o.h * (1 - o.type.hitTop);
       if (px2 > o.x + o.w * 0.08 && px1 < o.x + o.w * 0.92) {
@@ -1037,29 +1020,6 @@ const VERSION = '2026-10-22.1';
 
   // ---------- 장애물 차량 ----------
 
-  function drawDrone(o) {
-    const y = groundY - o.alt - o.h, cx = o.x + o.w / 2;
-    ctx.strokeStyle = '#64748b';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(o.x + 8, y + 8); ctx.lineTo(o.x + o.w - 8, y + 8);
-    ctx.stroke();
-    // 프로펠러 (빠르게 깜빡이는 원판)
-    ctx.fillStyle = `rgba(203,213,225,${0.25 + 0.2 * Math.abs(Math.sin(clock * 40))})`;
-    for (const px of [o.x + 8, o.x + o.w - 8]) {
-      ctx.beginPath(); ctx.ellipse(px, y + 4, 14, 3, 0, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.fillStyle = '#1e293b';
-    ctx.beginPath(); ctx.roundRect(cx - 16, y + 6, 32, 14, 5); ctx.fill();
-    ctx.fillStyle = '#334155';
-    ctx.fillRect(cx - 10, y + 20, 3, 6); ctx.fillRect(cx + 7, y + 20, 3, 6);
-    // 경고등
-    const blink = Math.sin(clock * 8) > 0;
-    glow(cx, y + 13, 14, blink ? '239,68,68' : '34,197,94', 0.6);
-    ctx.fillStyle = blink ? '#ef4444' : '#22c55e';
-    ctx.beginPath(); ctx.arc(cx, y + 13, 2.5, 0, Math.PI * 2); ctx.fill();
-  }
-
   function drawPopups() {
     ctx.textAlign = 'center';
     ctx.font = 'bold 18px system-ui, sans-serif';
@@ -1072,7 +1032,6 @@ const VERSION = '2026-10-22.1';
   }
 
   function drawObstacle(o) {
-    if (o.kind === 'drone') return drawDrone(o);
     const top = groundY - o.h;
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.beginPath();
@@ -1129,7 +1088,7 @@ const VERSION = '2026-10-22.1';
       ctx.fillText('Kakao Taxi Jump', W / 2, H * 0.3);
       ctx.font = '16px system-ui, sans-serif';
       ctx.fillText('Enter / Space / 탭으로 점프', W / 2, H * 0.3 + 32);
-      ctx.fillText('길게 누르면 더 높이! 드론 아래는 짧게', W / 2, H * 0.3 + 54);
+      ctx.fillText('길게 누르면 더 높이, 더 멀리!', W / 2, H * 0.3 + 54);
       ctx.fillText('차 위를 아슬아슬하게 넘으면 보너스', W / 2, H * 0.3 + 76);
       if (shakeOn) {
         ctx.fillStyle = '#fbbf24';
