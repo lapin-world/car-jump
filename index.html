@@ -345,6 +345,9 @@
   // publishable 키는 공개용 키라 코드에 포함해도 됨. 쓰기 권한은 DB의 RLS 정책(supabase/scores.sql)으로 제한
   const SUPABASE_URL = 'https://auwkyehgnxejxacoklqt.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_I-9YEVmXr6EnOGLPzjL-qg_OZlnHI5d';
+  // 랭킹 등록 가능한 최대 점수 (만점). DB check 제약(supabase/scores.sql)과 같은 값이어야 함
+  const MAX_SCORE = 9999;
+  const canSubmit = (v) => Number.isInteger(v) && v > 0 && v <= MAX_SCORE;
   const rankEl = document.getElementById('rank');
   const rankForm = document.getElementById('rank-form');
   const rankName = document.getElementById('rank-name');
@@ -378,7 +381,7 @@
 
   function showRanking() {
     submittedScore = false;
-    rankForm.hidden = score <= 0;
+    rankForm.hidden = !canSubmit(score);
     rankForm.querySelector('button').disabled = false;
     try { rankName.value = localStorage.getItem('roadster-name') || ''; } catch {}
     rankEl.hidden = false;
@@ -393,7 +396,7 @@
   rankForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = rankName.value.trim().slice(0, 12);
-    if (!name || submittedScore) return;
+    if (!name || submittedScore || !canSubmit(score)) return;
     submittedScore = true;
     rankForm.querySelector('button').disabled = true;
     try { localStorage.setItem('roadster-name', name); } catch {}
