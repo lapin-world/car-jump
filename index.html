@@ -49,9 +49,22 @@
     padding: 8px 12px; border: 0; border-radius: 8px; background: #fbbf24; color: #111827; font: 600 14px system-ui, sans-serif;
   }
   #rank button:disabled { opacity: 0.5; }
-  #rank ol { margin: 0; padding-left: 24px; }
-  #rank li { display: flex; justify-content: space-between; padding: 2px 0; }
-  #rank li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 8px; }
+  #rank ol { list-style: none; margin: 0; padding: 0; }
+  #rank li { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 8px; }
+  #rank li .no { width: 24px; text-align: center; color: #94a3b8; }
+  #rank li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #rank li .score { font-variant-numeric: tabular-nums; }
+  /* 1~3등 강조 (금·은·동) */
+  #rank li.top { margin-bottom: 4px; font-weight: 700; }
+  #rank li.top .no { font-size: 18px; }
+  #rank li.g1 { background: linear-gradient(90deg, rgba(251,191,36,0.35), rgba(251,191,36,0.05)); border: 1px solid rgba(251,191,36,0.7); font-size: 17px; padding: 8px; box-shadow: 0 0 12px rgba(251,191,36,0.35); }
+  #rank li.g1 .score { color: #fbbf24; }
+  #rank li.g2 { background: linear-gradient(90deg, rgba(203,213,225,0.28), rgba(203,213,225,0.04)); border: 1px solid rgba(203,213,225,0.6); font-size: 15px; }
+  #rank li.g2 .score { color: #e2e8f0; }
+  #rank li.g3 { background: linear-gradient(90deg, rgba(217,119,6,0.3), rgba(217,119,6,0.04)); border: 1px solid rgba(217,119,6,0.65); font-size: 15px; }
+  #rank li.g3 .score { color: #f59e0b; }
+  /* 내 기록 강조 */
+  #rank li.me { outline: 2px solid #38bdf8; }
   #rank .msg { color: #94a3b8; margin: 4px 0; }
 </style>
 </head>
@@ -370,11 +383,16 @@
     rankMsg.textContent = '랭킹 불러오는 중…';
     try {
       const rows = await api('scores?select=name,score&order=score.desc,created_at.asc&limit=10');
-      rankList.replaceChildren(...rows.map((r) => {
+      let myName = '';
+      try { myName = (localStorage.getItem('roadster-name') || '').toLowerCase(); } catch {}
+      rankList.replaceChildren(...rows.map((r, i) => {
         const li = document.createElement('li');
-        const n = document.createElement('span'); n.textContent = r.name;
-        const v = document.createElement('span'); v.textContent = r.score;
-        li.append(n, v);
+        if (i < 3) li.classList.add('top', `g${i + 1}`);
+        if (myName && r.name.toLowerCase() === myName) li.classList.add('me');
+        const no = document.createElement('span'); no.className = 'no'; no.textContent = ['🥇', '🥈', '🥉'][i] || i + 1;
+        const n = document.createElement('span'); n.className = 'name'; n.textContent = r.name;
+        const v = document.createElement('span'); v.className = 'score'; v.textContent = r.score;
+        li.append(no, n, v);
         return li;
       }));
       rankMsg.textContent = rows.length ? 'TOP 10' : '아직 기록이 없어요';
