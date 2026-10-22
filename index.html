@@ -31,17 +31,17 @@
     background: rgba(15,23,42,0.9); color: #f8fafc; font: 14px system-ui, sans-serif;
   }
   #rank[hidden] { display: none; }
-  #rank form { display: flex; gap: 8px; margin-bottom: 10px; }
-  #rank form[hidden] { display: none; } /* display:flex 가 hidden 속성을 덮어쓰지 않게 */
-  #rank input {
+  #rank-form { display: flex; gap: 8px; margin-bottom: 10px; }
+  #rank-form[hidden] { display: none; } /* display:flex 가 hidden 속성을 덮어쓰지 않게 */
+  #rank-form input {
     flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #475569; border-radius: 8px;
     background: #0f172a; color: #f8fafc; font: inherit; user-select: text; -webkit-user-select: text;
     font-size: 16px; /* iOS Safari는 16px 미만 입력칸에 포커스하면 화면을 자동 확대함 */
   }
-  #rank button {
+  #rank-form button {
     padding: 8px 12px; border: 0; border-radius: 8px; background: #fbbf24; color: #111827; font: 600 14px system-ui, sans-serif;
   }
-  #rank button:disabled { opacity: 0.5; }
+  #rank-form button:disabled { opacity: 0.5; }
   #rank ol { list-style: none; margin: 0; padding: 0; }
   #rank li { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 8px; }
   #rank li .no { width: 24px; text-align: center; color: #94a3b8; }
@@ -59,6 +59,16 @@
   /* 내 기록 강조 */
   #rank li.me { outline: 2px solid #38bdf8; }
   #rank .msg { color: #94a3b8; margin: 4px 0; }
+  /* 낮은 가로 화면: 2단 배치. 왼쪽(#rank-side)에 이름 입력, 오른쪽 패널에 랭킹을 촘촘하게 */
+  #rank-side { position: fixed; transform: translateX(-50%); width: min(300px, 42vw); }
+  #rank-side[hidden] { display: none; }
+  #rank.split { left: auto; right: 16px; transform: none; width: min(320px, 46vw); padding: 8px 12px; }
+  #rank.split .msg { margin: 0 0 4px; font-size: 12px; }
+  #rank.split li { padding: 2px 8px; font-size: 13px; }
+  #rank.split li.top { margin-bottom: 3px; }
+  #rank.split li.top .no { font-size: 15px; }
+  #rank.split li.g1 { padding: 4px 8px; font-size: 15px; }
+  #rank.split li.g2, #rank.split li.g3 { font-size: 14px; }
 </style>
 </head>
 <body>
@@ -71,9 +81,10 @@
   <p class="msg" id="rank-msg"></p>
   <ol id="rank-list"></ol>
 </div>
+<div id="rank-side" hidden></div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.11';
+const VERSION = '2026-10-22.12';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -435,6 +446,7 @@ const VERSION = '2026-10-22.11';
   const canSubmit = (v) => Number.isInteger(v) && v > 0 && v <= MAX_SCORE;
   const rankEl = document.getElementById('rank');
   const rankForm = document.getElementById('rank-form');
+  const rankSide = document.getElementById('rank-side');
   const rankName = document.getElementById('rank-name');
   const rankMsg = document.getElementById('rank-msg');
   const rankList = document.getElementById('rank-list');
@@ -484,6 +496,7 @@ const VERSION = '2026-10-22.11';
 
   function hideRanking() {
     rankEl.hidden = true;
+    rankSide.hidden = true;
     rankName.blur();
   }
 
@@ -1114,12 +1127,16 @@ const VERSION = '2026-10-22.11';
   function drawHUD() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const W = SW, H = SH;
+    // 2단 게임 오버 화면에서는 오른쪽 위를 랭킹 패널이 쓰므로 점수는 왼쪽 문구 위에 표시
+    const splitOver = state === 'over' && isSplit(W, H);
     ctx.fillStyle = '#f8fafc';
-    ctx.font = 'bold 20px system-ui, sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText(`SCORE ${score}`, W - 16, 32);
-    ctx.font = '14px system-ui, sans-serif';
-    ctx.fillText(`BEST ${best} · ROLLS ${flips || 0}`, W - 16, 54);
+    if (!splitOver) {
+      ctx.font = 'bold 20px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(`SCORE ${score}`, W - 16, 32);
+      ctx.font = '14px system-ui, sans-serif';
+      ctx.fillText(`BEST ${best} · ROLLS ${flips || 0}`, W - 16, 54);
+    }
     if (state === 'playing' && combo > 1) {
       ctx.fillStyle = '#38bdf8';
       ctx.fillText(`COMBO x${combo}`, W - 16, 74);
@@ -1135,34 +1152,67 @@ const VERSION = '2026-10-22.11';
       ctx.fillText(`v${VERSION}`, 16, 24);
       drawStartScreen(W, H);
     } else if (state === 'over') {
-      const y = layoutOver(H);
+      const { x, y } = layoutOver(W, H);
+      if (splitOver) {
+        ctx.font = '14px system-ui, sans-serif';
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText(`SCORE ${score} · BEST ${best}`, x, y - 40);
+        ctx.fillStyle = '#f8fafc';
+      }
       ctx.font = 'bold 32px system-ui, sans-serif';
-      ctx.fillText('CRASH!', W / 2, y);
+      ctx.fillText('CRASH!', x, y);
       ctx.font = '16px system-ui, sans-serif';
-      ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', W / 2, y + 32);
+      ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, y + 32);
       // 길게 누르는 동안 진행 막대
       if (restartHold !== null) {
         const t = Math.min(1, (clock - restartHold) / RESTART_HOLD);
         ctx.fillStyle = 'rgba(148,163,184,0.3)';
-        ctx.fillRect(W / 2 - 80, y + 42, 160, 4);
+        ctx.fillRect(x - 80, y + 42, 160, 4);
         ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(W / 2 - 80, y + 42, 160 * t, 4);
+        ctx.fillRect(x - 80, y + 42, 160 * t, 4);
       }
     }
   }
 
-  // 게임 오버 문구(캔버스)와 랭킹 패널(HTML)이 겹치지 않게 배치.
-  // 문구 기준선 y 를 정하고 패널은 그 아래(y + 58)에 두며, 화면이 낮으면 문구를 올리고 패널은 스크롤
-  let rankTop = -1;
-  function layoutOver(H) {
-    const panelH = rankEl.hidden ? 0 : rankEl.scrollHeight;
-    const y = Math.round(Math.max(48, Math.min(H * 0.3, H - panelH - 70)));
-    if (y + 58 !== rankTop) {
-      rankTop = y + 58;
-      rankEl.style.top = `${rankTop}px`;
-      rankEl.style.maxHeight = `${Math.max(120, H - rankTop - 12)}px`;
+  // 게임 오버 문구(캔버스)와 랭킹 패널(HTML)이 겹치지 않게 배치하고 문구 위치 {x, y} 를 돌려줌
+  // - 기본: 문구 아래(y + 58)에 패널. 화면이 낮으면 문구를 올리고 패널은 스크롤
+  // - 낮은 가로 화면: 2단. 왼쪽에 문구 + 이름 입력, 오른쪽에 랭킹 목록
+  let overLayoutKey = '';
+  function isSplit(W, H) {
+    return W > H && H < 560;
+  }
+
+  function layoutOver(W, H) {
+    const split = isSplit(W, H);
+    let x = W / 2, y;
+    let key;
+    if (split) {
+      x = Math.round(W * 0.27);
+      y = Math.round(Math.max(72, H * 0.3));
+      key = `s${x},${y},${H},${rankEl.hidden}`;
+      if (key !== overLayoutKey) {
+        rankEl.classList.add('split');
+        if (rankForm.parentNode !== rankSide) rankSide.append(rankForm);
+        rankEl.style.top = '12px';
+        rankEl.style.maxHeight = `${H - 24}px`;
+        rankSide.style.left = `${x}px`;
+        rankSide.style.top = `${y + 58}px`;
+        rankSide.hidden = rankEl.hidden;
+      }
+    } else {
+      const panelH = rankEl.hidden ? 0 : rankEl.scrollHeight;
+      y = Math.round(Math.max(48, Math.min(H * 0.3, H - panelH - 70)));
+      key = `n${y},${H},${rankEl.hidden}`;
+      if (key !== overLayoutKey) {
+        rankEl.classList.remove('split');
+        if (rankForm.parentNode !== rankEl) rankEl.prepend(rankForm);
+        rankSide.hidden = true;
+        rankEl.style.top = `${y + 58}px`;
+        rankEl.style.maxHeight = `${Math.max(120, H - y - 70)}px`;
+      }
     }
-    return y;
+    overLayoutKey = key;
+    return { x, y };
   }
 
   function draw() {
