@@ -32,11 +32,40 @@
   }
   #shake-btn.on { background: rgba(251,191,36,0.9); color: #111827; border-color: #fbbf24; }
   #shake-btn[hidden] { display: none; }
+  /* 게임 오버 시 랭킹 패널 */
+  #rank {
+    position: fixed; left: 50%; top: calc(30% + 48px); transform: translateX(-50%);
+    width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 14px 16px;
+    border: 1px solid rgba(148,197,255,0.4); border-radius: 14px;
+    background: rgba(15,23,42,0.9); color: #f8fafc; font: 14px system-ui, sans-serif;
+  }
+  #rank[hidden] { display: none; }
+  #rank form { display: flex; gap: 8px; margin-bottom: 10px; }
+  #rank input {
+    flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #475569; border-radius: 8px;
+    background: #0f172a; color: #f8fafc; font: inherit; user-select: text; -webkit-user-select: text;
+  }
+  #rank button {
+    padding: 8px 12px; border: 0; border-radius: 8px; background: #fbbf24; color: #111827; font: 600 14px system-ui, sans-serif;
+  }
+  #rank button:disabled { opacity: 0.5; }
+  #rank ol { margin: 0; padding-left: 24px; }
+  #rank li { display: flex; justify-content: space-between; padding: 2px 0; }
+  #rank li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 8px; }
+  #rank .msg { color: #94a3b8; margin: 4px 0; }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <button id="shake-btn" type="button" hidden>📱 흔들어서 점프 켜기</button>
+<div id="rank" hidden>
+  <form id="rank-form">
+    <input id="rank-name" maxlength="12" placeholder="이름 (최대 12자)" autocomplete="off">
+    <button type="submit">등록</button>
+  </form>
+  <p class="msg" id="rank-msg"></p>
+  <ol id="rank-list"></ol>
+</div>
 <script>
 (() => {
   const canvas = document.getElementById('game');
@@ -123,12 +152,14 @@
 
   function handleInput() {
     if (state === 'playing') return jump();
+    hideRanking();
     reset();
     state = 'playing';
     jump();
   }
 
   window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return; // 랭킹 이름 입력 중에는 점프/재시작 안 함
     if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
     if (e.repeat) return;
@@ -307,7 +338,79 @@
       best = score;
       try { localStorage.setItem('roadster-best', String(best)); } catch {}
     }
+    showRanking();
   }
+
+  // ---------- 온라인 랭킹 (Supabase) ----------
+  // publishable 키는 공개용 키라 코드에 포함해도 됨. 쓰기 권한은 DB의 RLS 정책(supabase/scores.sql)으로 제한
+  const SUPABASE_URL = 'https://auwkyehgnxejxacoklqt.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_I-9YEVmXr6EnOGLPzjL-qg_OZlnHI5d';
+  // 랭킹 등록 가능한 최대 점수 (만점). DB check 제약(supabase/scores.sql)과 같은 값이어야 함
+  const MAX_SCORE = 9999;
+  const canSubmit = (v) => Number.isInteger(v) && v > 0 && v <= MAX_SCORE;
+  const rankEl = document.getElementById('rank');
+  const rankForm = document.getElementById('rank-form');
+  const rankName = document.getElementById('rank-name');
+  const rankMsg = document.getElementById('rank-msg');
+  const rankList = document.getElementById('rank-list');
+  let submittedScore = false;
+
+  function api(path, options = {}) {
+    return fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      ...options,
+      headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json', ...options.headers },
+    }).then((r) => { if (!r.ok) throw new Error(r.status); return r.status === 204 || r.status === 201 ? null : r.json(); });
+  }
+
+  async function loadRanking() {
+    rankMsg.textContent = '랭킹 불러오는 중…';
+    try {
+      const rows = await api('scores?select=name,score&order=score.desc,created_at.asc&limit=10');
+      rankList.replaceChildren(...rows.map((r) => {
+        const li = document.createElement('li');
+        const n = document.createElement('span'); n.textContent = r.name;
+        const v = document.createElement('span'); v.textContent = r.score;
+        li.append(n, v);
+        return li;
+      }));
+      rankMsg.textContent = rows.length ? 'TOP 10' : '아직 기록이 없어요';
+    } catch {
+      rankMsg.textContent = '랭킹을 불러오지 못했어요';
+    }
+  }
+
+  function showRanking() {
+    submittedScore = false;
+    rankForm.hidden = !canSubmit(score);
+    rankForm.querySelector('button').disabled = false;
+    try { rankName.value = localStorage.getItem('roadster-name') || ''; } catch {}
+    rankEl.hidden = false;
+    loadRanking();
+  }
+
+  function hideRanking() {
+    rankEl.hidden = true;
+    rankName.blur();
+  }
+
+  rankForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = rankName.value.trim().slice(0, 12);
+    if (!name || submittedScore || !canSubmit(score)) return;
+    submittedScore = true;
+    rankForm.querySelector('button').disabled = true;
+    try { localStorage.setItem('roadster-name', name); } catch {}
+    try {
+      await api('scores', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ name, score }) });
+      rankForm.hidden = true;
+      rankName.blur();
+      await loadRanking();
+    } catch {
+      submittedScore = false;
+      rankForm.querySelector('button').disabled = false;
+      rankMsg.textContent = '등록에 실패했어요. 다시 시도해 주세요';
+    }
+  });
 
   // ---------- 배경: 영상 속 야간 시연장 ----------
 
