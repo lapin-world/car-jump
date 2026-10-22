@@ -80,6 +80,8 @@
   <ol id="rank-list"></ol>
 </div>
 <script>
+// 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
+const VERSION = '2026-10-22.1';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -179,6 +181,7 @@
 
   function handleInput() {
     if (state === 'playing') return jump();
+    if (pendingVersion && applyUpdate()) return;
     hideRanking();
     reset();
     state = 'playing';
@@ -443,6 +446,34 @@
     }
     showRanking();
   }
+
+  // ---------- 새 버전 자동 갱신 ----------
+  // GitHub Pages 캐시 때문에 예전 index.html 이 열려 있으면, 서버의 최신 파일 버전과 비교해
+  // 게임 중이 아닐 때 ?v=새버전 주소로 다시 열어 캐시를 우회함
+  let pendingVersion = null;
+
+  function applyUpdate() {
+    try {
+      // 같은 버전으로 반복 새로고침되는 것 방지 (배포 직후 서버 반영이 늦는 경우)
+      if (sessionStorage.getItem('roadster-reload') === pendingVersion) return false;
+      sessionStorage.setItem('roadster-reload', pendingVersion);
+    } catch {}
+    location.replace(`${location.pathname}?v=${encodeURIComponent(pendingVersion)}`);
+    return true;
+  }
+
+  async function checkUpdate() {
+    try {
+      const html = await (await fetch(location.pathname, { cache: 'no-store' })).text();
+      const latest = (html.match(/const VERSION = '([^']+)'/) || [])[1];
+      if (!latest || latest === VERSION) return;
+      pendingVersion = latest;
+      if (state === 'ready') applyUpdate();
+    } catch {}
+  }
+
+  checkUpdate();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 
   // ---------- 온라인 랭킹 (Supabase) ----------
   // publishable 키는 공개용 키라 코드에 포함해도 됨. 쓰기 권한은 DB의 RLS 정책(supabase/scores.sql)으로 제한
