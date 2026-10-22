@@ -36,6 +36,7 @@
   #rank input {
     flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #475569; border-radius: 8px;
     background: #0f172a; color: #f8fafc; font: inherit; user-select: text; -webkit-user-select: text;
+    font-size: 16px; /* iOS Safari는 16px 미만 입력칸에 포커스하면 화면을 자동 확대함 */
   }
   #rank button {
     padding: 8px 12px; border: 0; border-radius: 8px; background: #fbbf24; color: #111827; font: 600 14px system-ui, sans-serif;
@@ -72,7 +73,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.9';
+const VERSION = '2026-10-22.10';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -112,6 +113,8 @@ const VERSION = '2026-10-22.9';
   // 세로 화면(좁은 폭)에서도 다가오는 차량이 충분히 보이도록
   // 게임 월드를 최소 VIEW_MIN_W 논리 폭으로 잡고 화면에 맞게 축소해서 그림
   const VIEW_MIN_W = 820;
+  // 가로로 낮은 화면(모바일 가로 모드)에서도 길게 누른 점프(최고 약 333px)가 화면 안에 들어오도록 최소 논리 높이도 보장
+  const VIEW_MIN_H = 600;
   let W = 0, H = 0, groundY = 0;  // 게임 월드(논리) 크기
   let SW = 0, SH = 0, viewScale = 1, dpr = 1; // 실제 화면 크기와 축소 배율
   let state = 'ready'; // ready | playing | over
@@ -130,7 +133,7 @@ const VERSION = '2026-10-22.9';
     SH = window.innerHeight;
     canvas.width = SW * dpr;
     canvas.height = SH * dpr;
-    viewScale = Math.min(1, SW / VIEW_MIN_W);
+    viewScale = Math.min(1, SW / VIEW_MIN_W, SH / VIEW_MIN_H);
     W = SW / viewScale;
     H = SH / viewScale;
     // 세로 화면은 하늘이 지나치게 넓어지지 않게 도로를 화면 중간쯤에 둠
