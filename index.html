@@ -1,0 +1,780 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Roadster Jump</title>
+<meta name="description" content="엔터 한 번으로 테슬라를 뛰어넘어라! 배럴롤 점프 원버튼 게임">
+<meta name="theme-color" content="#020617">
+<!-- 링크 공유 미리보기 (카카오톡·슬랙·페이스북 등: Open Graph / X: Twitter Card) -->
+<!-- og:image·og:url 은 배포 주소 기준 절대 경로여야 썸네일이 표시됨 -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="Roadster Jump">
+<meta property="og:description" content="엔터 한 번으로 테슬라를 뛰어넘어라! 배럴롤 점프 원버튼 게임">
+<meta property="og:image" content="https://desk.sangwoo0205.workers.dev/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://desk.sangwoo0205.workers.dev/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Roadster Jump">
+<meta name="twitter:description" content="엔터 한 번으로 테슬라를 뛰어넘어라!">
+<meta name="twitter:image" content="https://desk.sangwoo0205.workers.dev/assets/og-image.png">
+<style>
+  html, body { margin: 0; height: 100%; background: #020617; overflow: hidden; }
+  body { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  // 물리 상수: 체공 약 0.9초, 최고 높이 약 185px
+  const GRAVITY = 1850;
+  const JUMP_VELOCITY = 830;
+  const CAR_SCALE = 1.6; // 로드스터 크기 배율
+  const ROLLS_PER_JUMP = 1; // 점프당 배럴롤 횟수 (영상 기준 약 1바퀴)
+  const START_SPEED = 380;
+  const MAX_SPEED = 900;
+  const SPEED_GAIN = 9; // 초당 속도 증가량
+
+  // 장애물 차량: 테슬라 차종 이미지 (모두 왼쪽을 향하도록 배경 제거·반전한 PNG)
+  // w: 화면 표시 폭(px), hitTop: 이미지 위쪽에서 판정 제외 비율, points: 넘었을 때 점수
+  const OBSTACLE_TYPES = [
+    { name: 'model3',     src: 'assets/cars/model3.png',     w: 150, hitTop: 0.15, points: 1 },
+    { name: 'modely',     src: 'assets/cars/modely.png',     w: 140, hitTop: 0.15, points: 1 },
+    { name: 'models',     src: 'assets/cars/models.png',     w: 150, hitTop: 0.15, points: 1 },
+    { name: 'cybercab',   src: 'assets/cars/cybercab.png',   w: 120, hitTop: 0.2,  points: 1 },
+    { name: 'modelx',     src: 'assets/cars/modelx.png',     w: 150, hitTop: 0.35, points: 2 }, // 팔콘윙 도어
+    { name: 'cybertruck', src: 'assets/cars/cybertruck.png', w: 165, hitTop: 0.1,  points: 2 },
+  ];
+  for (const t of OBSTACLE_TYPES) {
+    t.img = new Image();
+    t.img.onload = () => { t.h = Math.round(t.w * t.img.naturalHeight / t.img.naturalWidth); };
+    t.img.src = t.src;
+    t.h = Math.round(t.w * 0.33); // 로드 전 임시 높이
+  }
+
+  // 세로 화면(좁은 폭)에서도 다가오는 차량이 충분히 보이도록
+  // 게임 월드를 최소 VIEW_MIN_W 논리 폭으로 잡고 화면에 맞게 축소해서 그림
+  const VIEW_MIN_W = 820;
+  let W = 0, H = 0, groundY = 0;  // 게임 월드(논리) 크기
+  let SW = 0, SH = 0, viewScale = 1, dpr = 1; // 실제 화면 크기와 축소 배율
+  let state = 'ready'; // ready | playing | over
+  let speed, distance, score, best, obstacles, spawnTimer, particles, flips;
+  let player;
+
+  try { best = Number(localStorage.getItem('roadster-best')) || 0; } catch { best = 0; }
+
+  const stars = Array.from({ length: 70 }, () => ({ x: Math.random(), y: Math.random() * 0.6, r: Math.random() * 1.2 + 0.3 }));
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    SW = window.innerWidth;
+    SH = window.innerHeight;
+    canvas.width = SW * dpr;
+    canvas.height = SH * dpr;
+    viewScale = Math.min(1, SW / VIEW_MIN_W);
+    W = SW / viewScale;
+    H = SH / viewScale;
+    // 세로 화면은 하늘이 지나치게 넓어지지 않게 도로를 화면 중간쯤에 둠
+    groundY = Math.round(H * (SH > SW ? 0.6 : 0.72));
+    if (player) player.x = Math.max(100, W * 0.2);
+  }
+
+  function reset() {
+    speed = START_SPEED;
+    distance = 0;
+    score = 0;
+    flips = 0;
+    obstacles = [];
+    particles = [];
+    spawnTimer = 1.2;
+    player = {
+      x: Math.max(100, W * 0.2), y: 0, vy: 0, roll: 0, airTime: 0,
+      wheel: 0, onGround: true, smokeTimer: 0,
+    };
+  }
+
+  function airDuration() {
+    return (2 * JUMP_VELOCITY) / GRAVITY;
+  }
+
+  function jump() {
+    if (!player.onGround) return;
+    player.vy = JUMP_VELOCITY;
+    player.onGround = false;
+    player.airTime = 0;
+    smoke(player.x - 40 * CAR_SCALE, groundY - 6, 8, 40);
+  }
+
+  function handleInput() {
+    if (state === 'playing') return jump();
+    reset();
+    state = 'playing';
+    jump();
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    if (e.repeat) return;
+    handleInput();
+  });
+  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); handleInput(); });
+
+  // ---------- 파티클 (불꽃 / 연기) ----------
+
+  function sparks(x, y, n, color) {
+    for (let i = 0; i < n; i++) {
+      particles.push({
+        kind: 'spark', x, y,
+        vx: -Math.random() * 160 - 40,
+        vy: -Math.random() * 160,
+        life: 0.5 + Math.random() * 0.3,
+        color,
+      });
+    }
+  }
+
+  // 착지·번아웃 연기: 테일램프 빛을 받은 붉은 기와 투광등의 푸른 기를 섞음
+  function smoke(x, y, n, spread) {
+    for (let i = 0; i < n; i++) {
+      particles.push({
+        kind: 'smoke',
+        x: x + (Math.random() - 0.5) * spread,
+        y: y - Math.random() * 10,
+        vx: (Math.random() - 0.5) * 50,
+        vy: -Math.random() * 40 - 10,
+        r: 8 + Math.random() * 10,
+        life: 1 + Math.random() * 0.8,
+        maxLife: 1.8,
+        color: Math.random() < 0.35 ? '249,168,212' : '203,213,225',
+      });
+    }
+  }
+
+  function spawnObstacle() {
+    const type = OBSTACLE_TYPES[Math.floor(Math.random() * OBSTACLE_TYPES.length)];
+    obstacles.push({ type, w: type.w, h: type.h, x: W + 40, passed: false });
+  }
+
+  function update(dt) {
+    player.wheel += speed * dt / 14;
+    updateParticles(dt);
+    if (state !== 'playing') return;
+
+    speed = Math.min(MAX_SPEED, speed + SPEED_GAIN * dt);
+    distance += speed * dt;
+
+    if (!player.onGround) {
+      player.airTime += dt;
+      player.vy -= GRAVITY * dt;
+      player.y += player.vy * dt;
+      // 배럴롤: 이륙 직후 천천히 → 정점 부근에서 빠르게 → 착지 전 다시 천천히 정렬
+      const p = Math.min(1, player.airTime / airDuration());
+      const eased = p - Math.sin(2 * Math.PI * p) / (2 * Math.PI);
+      player.roll = Math.PI * 2 * ROLLS_PER_JUMP * eased;
+      if (player.y <= 0) {
+        player.y = 0;
+        player.vy = 0;
+        player.roll = 0;
+        player.onGround = true;
+        player.smokeTimer = 0.45;
+        flips++;
+        smoke(player.x, groundY - 4, 26, 100 * CAR_SCALE);
+      }
+    } else if (player.smokeTimer > 0) {
+      // 착지 직후 잠깐 이어지는 타이어 연기
+      player.smokeTimer -= dt;
+      smoke(player.x - 32 * CAR_SCALE, groundY - 4, 2, 20);
+    }
+
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawnObstacle();
+      const minGap = 0.85 + 120 / speed;
+      spawnTimer = minGap + Math.random() * 1.1;
+    }
+
+    for (const o of obstacles) {
+      o.x -= speed * dt;
+      if (!o.passed && o.x + o.w < player.x - 45) {
+        o.passed = true;
+        score += o.type.points;
+      }
+    }
+    obstacles = obstacles.filter((o) => o.x + o.w > -50);
+
+    // 충돌 판정 (회전 중인 차체를 감안해 박스를 조금 줄임)
+    const half = 44 * CAR_SCALE;
+    const px1 = player.x - half, px2 = player.x + half;
+    const pBottom = groundY - player.y;
+    for (const o of obstacles) {
+      // 이미지 여백을 감안해 좌우 8%, 위쪽 hitTop 비율만큼 판정 제외
+      const oTop = groundY - o.h * (1 - o.type.hitTop);
+      if (px2 > o.x + o.w * 0.08 && px1 < o.x + o.w * 0.92 && pBottom > oTop) {
+        gameOver();
+        break;
+      }
+    }
+  }
+
+  function updateParticles(dt) {
+    const scroll = state === 'playing' ? speed : 0;
+    for (const p of particles) {
+      if (p.kind === 'smoke') {
+        p.x += (p.vx - scroll * 0.75) * dt;
+        p.y += p.vy * dt;
+        p.vy *= 0.98;
+        p.r += 34 * dt;
+      } else {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 400 * dt;
+      }
+      p.life -= dt;
+    }
+    particles = particles.filter((p) => p.life > 0);
+  }
+
+  function gameOver() {
+    state = 'over';
+    sparks(player.x + 30, groundY - player.y, 30, '#ef4444');
+    smoke(player.x + 30, groundY - player.y, 14, 60);
+    if (score > best) {
+      best = score;
+      try { localStorage.setItem('roadster-best', String(best)); } catch {}
+    }
+  }
+
+  // ---------- 배경: 영상 속 야간 시연장 ----------
+
+  function repeatX(spacing, parallax, offset) {
+    const xs = [];
+    const shift = (distance * parallax + offset) % spacing;
+    for (let x = -shift - spacing; x < W + spacing; x += spacing) xs.push(x);
+    return xs;
+  }
+
+  function glow(x, y, r, rgb, a) {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(${rgb},${a})`);
+    g.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+
+  function drawBackground() {
+    const sky = ctx.createLinearGradient(0, 0, 0, groundY);
+    sky.addColorStop(0, '#01030a');
+    sky.addColorStop(1, '#0b1324');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, groundY);
+
+    ctx.fillStyle = 'rgba(226,232,240,0.6)';
+    for (const s of stars) ctx.fillRect(s.x * W, s.y * groundY, s.r, s.r);
+
+    // 원경 투광등 타워 + 하늘로 뻗는 빛기둥
+    for (const x of repeatX(560, 0.15, 0)) {
+      const top = groundY - 120;
+      const beam = ctx.createLinearGradient(0, 0, 0, top);
+      beam.addColorStop(0, 'rgba(148,197,255,0)');
+      beam.addColorStop(1, 'rgba(148,197,255,0.08)');
+      ctx.fillStyle = beam;
+      ctx.beginPath();
+      ctx.moveTo(x - 4, top);
+      ctx.lineTo(x - 30, 0);
+      ctx.lineTo(x + 30, 0);
+      ctx.lineTo(x + 4, top);
+      ctx.fill();
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(x - 1.5, top, 3, 120);
+      glow(x, top, 60, '186,230,253', 0.35);
+      ctx.fillStyle = '#f0f9ff';
+      ctx.beginPath(); ctx.arc(x, top, 3.5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // 점프 램프(곡선 구조물) 실루엣
+    for (const x of repeatX(1500, 0.4, 300)) {
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.arc(x + 120, groundY, 110, Math.PI, Math.PI * 1.5);
+      ctx.stroke();
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1;
+      for (let a = 0; a <= 1; a += 0.125) {
+        const ang = Math.PI + a * Math.PI * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(x + 120 + Math.cos(ang) * 110, groundY + Math.sin(ang) * 110);
+        ctx.lineTo(x + 120 + Math.cos(ang) * 110, groundY);
+        ctx.stroke();
+      }
+    }
+
+    // 전신주 + 전선
+    const poles = repeatX(320, 0.6, 100);
+    ctx.strokeStyle = 'rgba(100,116,139,0.35)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < poles.length - 1; i++) {
+      const a = poles[i], b = poles[i + 1];
+      for (const dy of [0, 8]) {
+        ctx.beginPath();
+        ctx.moveTo(a, groundY - 150 + dy);
+        ctx.quadraticCurveTo((a + b) / 2, groundY - 130 + dy, b, groundY - 150 + dy);
+        ctx.stroke();
+      }
+    }
+    for (const x of poles) {
+      ctx.fillStyle = '#1f2937';
+      ctx.fillRect(x - 2, groundY - 155, 4, 155);
+      ctx.fillRect(x - 14, groundY - 150, 28, 3);
+    }
+
+    // 지면 안개
+    const haze = ctx.createLinearGradient(0, groundY - 40, 0, groundY);
+    haze.addColorStop(0, 'rgba(148,163,184,0)');
+    haze.addColorStop(1, 'rgba(148,163,184,0.12)');
+    ctx.fillStyle = haze;
+    ctx.fillRect(0, groundY - 40, W, 40);
+
+    // 도로
+    ctx.fillStyle = '#0c0f16';
+    ctx.fillRect(0, groundY, W, H - groundY);
+    for (const x of repeatX(560, 0.15, 0)) glow(x, groundY + 30, 90, '186,230,253', 0.07);
+    ctx.fillStyle = '#334155';
+    const dash = distance % 60;
+    for (let x = -dash; x < W; x += 60) ctx.fillRect(x, groundY + 22, 30, 3);
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(0, groundY, W, 2);
+  }
+
+  // ---------- 로드스터 의사 3D 모델 ----------
+  // 사각면(quad) 메시를 진행 축(x) 기준으로 회전 → 뒷면 제거 + 깊이 정렬 + 조명
+  // → 회전 각도별 프레임 이미지로 미리 렌더링해서 공중에서는 이미지만 교체
+
+  // 2세대 로드스터 지붕선: 덕테일 → 패스트백 루프 → 윈드실드 → 긴 보닛
+  const PROFILE = [
+    [-51, 19], [-49, 23.5], [-45, 25], [-38, 25.6], [-32, 27], [-26, 30], [-20, 33],
+    [-12, 34.6], [-4, 35], [4, 34.6], [10, 33.2], [15, 31], [19, 28], [22, 25],
+    [28, 24], [34, 23], [40, 22], [46, 20], [50, 16.5], [52.5, 13], [53, 10],
+  ];
+  const BODY_BOTTOM = 8;
+  const SHOULDER = 23.5; // 이 높이 위는 폭이 좁은 캐빈
+  const HALF_WIDTH = 17;  // 하부 차체 반폭
+  const CABIN_WIDTH = 13; // 캐빈 하단 반폭
+  const ROOF_WIDTH = 10;  // 지붕 반폭
+  const AXIS_Y = 20;      // 회전축 높이
+  const ROLL_FRAMES = 48;
+  const SPRITE_W = 150, SPRITE_H = 120; // 차량 단위 기준 스프라이트 크기
+  const YELLOW = '#fbbf24', GLASS = '#1e293b', DARK = '#111827', BODY = '#f1f5f9';
+
+  // 카카오 T 택시 랩핑: 흰 차체 + 뒤쪽 사선 노란 스트라이프 2줄
+  // 스트라이프는 위로 갈수록 차 뒤쪽으로 기울어짐 (u = x + 1.1 * (y - 8))
+  function wrapColor(x, y) {
+    const u = x + 1.1 * (y - BODY_BOTTOM);
+    return (u > -24 && u < -16) || (u > -10 && u < -2) ? YELLOW : BODY;
+  }
+
+  function topAt(x) {
+    for (let i = 1; i < PROFILE.length; i++) {
+      const [x1, y1] = PROFILE[i];
+      if (x <= x1) {
+        const [x0, y0] = PROFILE[i - 1];
+        return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+      }
+    }
+    return PROFILE[PROFILE.length - 1][1];
+  }
+
+  // hint: 바깥 방향 힌트 [y, z] → 법선 방향 보정용
+  function quad(list, pts, color, hint, extra) {
+    const [a, b, , d] = pts;
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const v = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const len = Math.hypot(...n) || 1;
+    n = n.map((k) => k / len);
+    if (n[1] * hint[0] + n[2] * hint[1] < 0) n = n.map((k) => -k);
+    list.push({ pts, color, n, ...extra });
+  }
+
+  function buildMesh() {
+    const q = [];
+    const xs = [];
+    for (let x = -51; x < 53; x += 3) xs.push(x);
+    xs.push(53);
+
+    for (let i = 0; i < xs.length - 1; i++) {
+      const x0 = xs[i], x1 = xs[i + 1];
+      const xm = (x0 + x1) / 2;
+      const t0 = topAt(x0), t1 = topAt(x1);
+      const l0 = Math.min(t0, SHOULDER), l1 = Math.min(t1, SHOULDER);
+      const cabin = t0 > SHOULDER || t1 > SHOULDER;
+      const hasWindow = x0 >= -31 && x1 <= 21;
+
+      for (const side of [1, -1]) {
+        const z = HALF_WIDTH * side;
+        // 하부 옆면: 로커 패널 + 랩핑 색을 2단위 높이 칸으로 나눠 사선 스트라이프 표현
+        quad(q, [[x0, BODY_BOTTOM, z], [x1, BODY_BOTTOM, z], [x1, 9.5, z], [x0, 9.5, z]], '#334155', [0, side]);
+        for (let ya = 9.5; ya < Math.max(l0, l1); ya += 2) {
+          const yb0 = Math.min(ya + 2, l0), yb1 = Math.min(ya + 2, l1);
+          if (yb0 <= ya && yb1 <= ya) continue;
+          quad(q, [[x0, ya, z], [x1, ya, z], [x1, Math.max(ya, yb1), z], [x0, Math.max(ya, yb0), z]],
+            wrapColor(xm, ya + 1), [0, side]);
+        }
+        if (cabin) {
+          // 어깨선 → 안쪽으로 좁아지는 캐빈 옆면(유리)
+          quad(q, [[x0, l0, z], [x1, l1, z], [x1, l1, CABIN_WIDTH * side], [x0, l0, CABIN_WIDTH * side]],
+            wrapColor(xm, SHOULDER), [1, 0]);
+          quad(q, [[x0, l0, CABIN_WIDTH * side], [x1, l1, CABIN_WIDTH * side], [x1, t1, ROOF_WIDTH * side], [x0, t0, ROOF_WIDTH * side]],
+            hasWindow ? GLASS : wrapColor(xm, (l0 + t0) / 2), [0.3, side]);
+        }
+      }
+
+      if (cabin) {
+        // 지붕: 앞유리·뒷유리는 유리색, 가운데는 차체색
+        const glassTop = x0 >= 7 || x1 <= -23;
+        quad(q, [[x0, t0, ROOF_WIDTH], [x1, t1, ROOF_WIDTH], [x1, t1, -ROOF_WIDTH], [x0, t0, -ROOF_WIDTH]],
+          glassTop && hasWindow ? GLASS : wrapColor(xm, t0), [1, 0]);
+      } else {
+        // 보닛
+        quad(q, [[x0, t0, HALF_WIDTH], [x1, t1, HALF_WIDTH], [x1, t1, -HALF_WIDTH], [x0, t0, -HALF_WIDTH]], wrapColor(xm, t0), [1, 0]);
+      }
+      // 바닥
+      quad(q, [[x0, BODY_BOTTOM, HALF_WIDTH], [x1, BODY_BOTTOM, HALF_WIDTH], [x1, BODY_BOTTOM, -HALF_WIDTH], [x0, BODY_BOTTOM, -HALF_WIDTH]], '#0b0f19', [-1, 0]);
+    }
+
+    for (const side of [1, -1]) {
+      const z = (HALF_WIDTH + 0.3) * side;
+      // 슬림 헤드램프 / 일자 테일램프 (옆면보다 살짝 바깥)
+      quad(q, [[43, 18, z], [50, 16.5, z], [50, 18, z], [43, 19.5, z]], '#e0f2fe', [0, side], { emissive: true });
+      quad(q, [[-51, 19.5, z], [-47, 19.5, z], [-47, 22, z], [-51, 21.5, z]], '#ef4444', [0, side], { emissive: true });
+      // 도어 데칼: 캐릭터 얼굴 + '카카오 T' 로고 (면보다 살짝 바깥, 그리기 전용)
+      const dz = (HALF_WIDTH + 0.4) * side;
+      quad(q, [[-16, 12, dz], [-8, 12, dz], [-8, 20, dz], [-16, 20, dz]], BODY, [0, side], { decal: 'face', side });
+      quad(q, [[2, 13, dz], [22, 13, dz], [22, 19, dz], [2, 19, dz]], BODY, [0, side], { decal: 'logo', side });
+      // 루프 kakao T 표시등 옆면
+      quad(q, [[-10, 35, 5 * side], [6, 35, 5 * side], [6, 40, 5 * side], [-10, 40, 5 * side]], YELLOW, [0, side], { decal: 'sign', side, emissive: true });
+    }
+    quad(q, [[-10, 40, 5], [6, 40, 5], [6, 40, -5], [-10, 40, -5]], YELLOW, [1, 0], { emissive: true });
+    return q;
+  }
+
+  const MESH = buildMesh();
+  const WHEELS = [];
+  for (const x of [-32, 33]) for (const side of [1, -1]) WHEELS.push({ x, z: (HALF_WIDTH + 0.6) * side });
+
+  function rotY(y, z, c, s) { return (y - AXIS_Y) * c - z * s; }
+  function rotZ(y, z, c, s) { return (y - AXIS_Y) * s + z * c; }
+
+  function shade(hex, k) {
+    const n = parseInt(hex.slice(1), 16);
+    const f = (v) => Math.max(0, Math.min(255, Math.round(v * k)));
+    return `rgb(${f(n >> 16)},${f((n >> 8) & 255)},${f(n & 255)})`;
+  }
+
+  function drawWheel3D(g, w, c, s, rot) {
+    const cx = w.x, cy = -rotY(9, w.z, c, s);
+    const ac = Math.abs(c), as = Math.abs(s);
+    const R = 10;
+    // 바퀴 옆면은 cos 만큼 납작, 타이어 트레드 폭은 sin 만큼 보임
+    g.fillStyle = '#05070c';
+    g.beginPath();
+    g.ellipse(cx, cy, R, R * ac + 4 * as, 0, 0, Math.PI * 2);
+    g.fill();
+    if (ac > 0.25) {
+      g.fillStyle = '#9ca3af';
+      g.beginPath();
+      g.ellipse(cx, cy, R * 0.6, R * 0.6 * ac, 0, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = '#374151';
+      g.lineWidth = 1.4;
+      for (let k = 0; k < 5; k++) {
+        const a = rot + k * Math.PI * 0.4;
+        g.beginPath();
+        g.moveTo(cx, cy);
+        g.lineTo(cx + Math.cos(a) * R * 0.6, cy + Math.sin(a) * R * 0.6 * ac);
+        g.stroke();
+      }
+    }
+  }
+
+  // 옆면 데칼을 면의 기울기대로 투영 (side: 가까운 면 1 / 먼 면 -1 → 글자 좌우 방향)
+  function drawDecal(g, face, pts, c, k) {
+    const cx = (pts[0][0] + pts[2][0]) / 2, cy = (pts[0][1] + pts[2][1]) / 2;
+    g.save();
+    g.transform(face.side, 0, 0, c, cx, cy);
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    if (face.decal === 'sign') {
+      g.fillStyle = DARK;
+      g.font = 'bold 3.4px system-ui, sans-serif';
+      g.fillText('kakao T', 0, 0.2);
+    } else if (face.decal === 'logo') {
+      g.fillStyle = shade(DARK, 1);
+      g.font = 'bold 4.6px system-ui, sans-serif';
+      g.fillText('카카오 T', 0, 0.3);
+    } else {
+      // 동그란 곰 캐릭터 얼굴 (귀 + 눈 + 주둥이)
+      const fur = shade('#f59e0b', k), dark = '#3f2a14';
+      g.fillStyle = fur;
+      for (const ex of [-2.6, 2.6]) { g.beginPath(); g.arc(ex, -2.8, 1.4, 0, Math.PI * 2); g.fill(); }
+      g.beginPath(); g.arc(0, 0, 3.6, 0, Math.PI * 2); g.fill();
+      g.fillStyle = dark;
+      for (const ex of [-1.3, 1.3]) { g.beginPath(); g.arc(ex, -0.6, 0.45, 0, Math.PI * 2); g.fill(); }
+      g.fillStyle = shade('#fde68a', k);
+      g.beginPath(); g.ellipse(0, 1.2, 1.5, 1, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = dark;
+      g.beginPath(); g.arc(0, 0.8, 0.45, 0, Math.PI * 2); g.fill();
+    }
+    g.restore();
+  }
+
+  // roll 각도의 로드스터를 원점(회전축) 기준으로 그림
+  function renderRoadster(g, roll, wheelRot) {
+    const c = Math.cos(roll), s = Math.sin(roll);
+    const items = [];
+    for (const f of MESH) {
+      const nz = f.n[1] * s + f.n[2] * c;
+      if (nz <= 0.01) continue; // 뒷면 제거
+      const ny = f.n[1] * c - f.n[2] * s;
+      let depth = 0;
+      const pts = f.pts.map(([x, y, z]) => {
+        depth += rotZ(y, z, c, s);
+        return [x, -rotY(y, z, c, s)];
+      });
+      items.push({ depth: depth / 4, face: f, pts, ny, nz });
+    }
+    for (const w of WHEELS) items.push({ depth: rotZ(9, w.z, c, s), wheel: w });
+    items.sort((a, b) => a.depth - b.depth);
+
+    for (const it of items) {
+      if (it.wheel) { drawWheel3D(g, it.wheel, c, s, wheelRot); continue; }
+      const { face, pts, ny, nz } = it;
+      // 위쪽 투광등 + 정면 반사광 조명
+      const k = face.emissive ? 1 : Math.min(1.15, 0.42 + 0.38 * Math.max(0, ny) + 0.32 * nz);
+      // 도어 데칼은 바탕 없이 그림만 얹음 (아래 스트라이프가 비치도록)
+      if (face.decal && face.decal !== 'sign') {
+        if (nz > 0.3) drawDecal(g, face, pts, c, k);
+        continue;
+      }
+      g.fillStyle = shade(face.color, k);
+      g.beginPath();
+      g.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < 4; i++) g.lineTo(pts[i][0], pts[i][1]);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = g.fillStyle; // 면 사이 틈 제거
+      g.lineWidth = 0.6;
+      g.stroke();
+      if (face.decal && nz > 0.3) drawDecal(g, face, pts, c, k);
+    }
+  }
+
+  // 회전 프레임 스프라이트 미리 생성
+  let rollSprites = [];
+  function buildSprites() {
+    const dpr = window.devicePixelRatio || 1;
+    const k = CAR_SCALE * dpr;
+    rollSprites = [];
+    for (let i = 0; i < ROLL_FRAMES; i++) {
+      const cv = document.createElement('canvas');
+      cv.width = SPRITE_W * k;
+      cv.height = SPRITE_H * k;
+      const g = cv.getContext('2d');
+      g.setTransform(k, 0, 0, k, cv.width / 2, cv.height / 2);
+      renderRoadster(g, (i / ROLL_FRAMES) * Math.PI * 2, 0);
+      rollSprites.push(cv);
+    }
+  }
+
+  // 차체 모서리의 추진 분사구: 영상처럼 X자로 뻗어 회전을 일으키는 파란 분사
+  const THRUSTERS = [
+    { x: -44, y: BODY_BOTTOM + 1, z: HALF_WIDTH, dy: -0.7, dz: 0.7 },
+    { x: -44, y: SHOULDER, z: -HALF_WIDTH, dy: 0.7, dz: -0.7 },
+    { x: 40, y: BODY_BOTTOM + 1, z: -HALF_WIDTH, dy: -0.7, dz: -0.7 },
+    { x: 40, y: SHOULDER - 1, z: HALF_WIDTH, dy: 0.7, dz: 0.7 },
+  ];
+
+  function drawJet(x0, y0, dx, dy, len, width) {
+    const x1 = x0 + dx * len, y1 = y0 + dy * len;
+    const nx = -dy, ny = dx;
+    const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+    grad.addColorStop(0, 'rgba(240,249,255,0.95)');
+    grad.addColorStop(0.25, 'rgba(125,211,252,0.8)');
+    grad.addColorStop(1, 'rgba(59,130,246,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(x0 + nx * width * 0.5, y0 + ny * width * 0.5);
+    ctx.quadraticCurveTo(x0 + dx * len * 0.5 + nx * width, y0 + dy * len * 0.5 + ny * width, x1, y1);
+    ctx.quadraticCurveTo(x0 + dx * len * 0.5 - nx * width, y0 + dy * len * 0.5 - ny * width, x0 - nx * width * 0.5, y0 - ny * width * 0.5);
+    ctx.fill();
+  }
+
+  // 현재 roll 기준 분사 화염을 그림 (front=true면 차체 앞쪽에 있는 분사만)
+  function drawThrusters(roll, intensity, front) {
+    const c = Math.cos(roll), s = Math.sin(roll);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const t of THRUSTERS) {
+      const depth = rotZ(t.y, t.z, c, s);
+      if ((depth > 0) !== front) continue;
+      const px = t.x, py = -rotY(t.y, t.z, c, s);
+      // 분사 방향(화면): 회전된 방향의 세로 성분 + 진행 반대쪽으로 흩날림
+      const sy = -(t.dy * c - t.dz * s);
+      let dx = -0.55, dy = sy;
+      const m = Math.hypot(dx, dy);
+      dx /= m; dy /= m;
+      const len = (22 + Math.random() * 10) * (0.45 + 0.55 * Math.abs(sy)) * intensity;
+      drawJet(px, py, dx, dy, len, 3.2);
+      glow(px, py, 6, '186,230,253', 0.6 * intensity);
+    }
+    if (front) {
+      // 후방 메인 분사
+      drawJet(-51, -rotY(16, 0, c, s), -1, 0, (16 + Math.random() * 8) * intensity, 3);
+    }
+    ctx.restore();
+  }
+
+  function drawRoadster() {
+    const { x, y, roll, wheel: rot } = player;
+    const cy = groundY - y - AXIS_Y * CAR_SCALE;
+
+    if (y < 70) {
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.beginPath();
+      ctx.ellipse(x, groundY + 1, 52 * CAR_SCALE * (1 - y / 90), 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (player.onGround) {
+      // 바닥에 번지는 붉은 테일램프 빛
+      const tail = x - 51 * CAR_SCALE;
+      const trail = ctx.createLinearGradient(tail - 120, 0, tail, 0);
+      trail.addColorStop(0, 'rgba(239,68,68,0)');
+      trail.addColorStop(1, 'rgba(239,68,68,0.45)');
+      ctx.fillStyle = trail;
+      ctx.fillRect(tail - 120, groundY - 4, 120, 8);
+      glow(tail, groundY - 20 * CAR_SCALE, 22, '239,68,68', 0.5);
+
+      // 지면 주행: 바퀴 회전을 위해 실시간 렌더
+      ctx.save();
+      ctx.translate(x, cy);
+      ctx.scale(CAR_SCALE, CAR_SCALE);
+      renderRoadster(ctx, 0, rot);
+      ctx.restore();
+      return;
+    }
+
+    // 공중: 회전 각도에 맞는 프레임 이미지로 교체 + 분사 화염
+    const p = Math.min(1, player.airTime / airDuration());
+    const intensity = p > 0.85 ? (1 - p) / 0.15 : Math.min(1, p / 0.08 + 0.3);
+    const pitch = -Math.atan2(player.vy, speed) * 0.35;
+    const frame = Math.round((roll / (Math.PI * 2)) * ROLL_FRAMES) % ROLL_FRAMES;
+
+    ctx.save();
+    ctx.translate(x, cy);
+    ctx.rotate(pitch);
+    ctx.scale(CAR_SCALE, CAR_SCALE);
+    drawThrusters(roll, intensity, false);
+    ctx.drawImage(rollSprites[frame], -SPRITE_W / 2, -SPRITE_H / 2, SPRITE_W, SPRITE_H);
+    drawThrusters(roll, intensity, true);
+    ctx.restore();
+  }
+
+  // ---------- 장애물 차량 ----------
+
+  function drawObstacle(o) {
+    const top = groundY - o.h;
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath();
+    ctx.ellipse(o.x + o.w / 2, groundY + 1, o.w * 0.48, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (o.type.img.complete && o.type.img.naturalWidth) {
+      // 야간 장면에 맞게 살짝 어둡게
+      ctx.filter = 'brightness(0.78)';
+      ctx.drawImage(o.type.img, o.x, top + 2, o.w, o.h);
+      ctx.filter = 'none';
+    }
+    glow(o.x + o.w * 0.03, top + o.h * 0.5, 16, '224,242,254', 0.55);
+    glow(o.x + o.w * 0.97, top + o.h * 0.4, 10, '239,68,68', 0.45);
+  }
+
+  function drawParticles(kind) {
+    for (const p of particles) {
+      if (p.kind !== kind) continue;
+      if (kind === 'smoke') {
+        const a = Math.max(0, p.life / p.maxLife) * 0.35;
+        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
+        g.addColorStop(0, `rgba(${p.color},${a})`);
+        g.addColorStop(1, `rgba(${p.color},0)`);
+        ctx.fillStyle = g;
+        ctx.fillRect(p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
+      } else {
+        ctx.globalAlpha = Math.max(0, p.life * 1.5);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, 4, 4);
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  // HUD는 축소 없이 실제 화면 크기 기준으로 그림 (세로 화면에서도 글자 크기 유지)
+  function drawHUD() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = SW, H = SH;
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 20px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(`SCORE ${score}`, W - 16, 32);
+    ctx.font = '14px system-ui, sans-serif';
+    ctx.fillText(`BEST ${best} · ROLLS ${flips || 0}`, W - 16, 54);
+
+    ctx.textAlign = 'center';
+    if (state === 'ready') {
+      ctx.font = 'bold 32px system-ui, sans-serif';
+      ctx.fillText('ROADSTER JUMP', W / 2, H * 0.3);
+      ctx.font = '16px system-ui, sans-serif';
+      ctx.fillText('Enter / Space / 탭으로 점프', W / 2, H * 0.3 + 32);
+      ctx.fillText('배럴롤로 차량을 넘어라!', W / 2, H * 0.3 + 54);
+    } else if (state === 'over') {
+      ctx.font = 'bold 32px system-ui, sans-serif';
+      ctx.fillText('CRASH!', W / 2, H * 0.3);
+      ctx.font = '16px system-ui, sans-serif';
+      ctx.fillText('Enter / 탭으로 다시 시작', W / 2, H * 0.3 + 32);
+    }
+  }
+
+  function draw() {
+    ctx.setTransform(dpr * viewScale, 0, 0, dpr * viewScale, 0, 0);
+    drawBackground();
+    for (const o of obstacles) drawObstacle(o);
+    drawParticles('smoke');
+    drawRoadster();
+    drawParticles('spark');
+    drawHUD();
+  }
+
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener('resize', () => { resize(); buildSprites(); });
+  resize();
+  buildSprites();
+  reset();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
