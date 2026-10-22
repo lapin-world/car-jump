@@ -84,7 +84,7 @@
 <div id="rank-side" hidden></div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.12';
+const VERSION = '2026-10-22.13';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -497,6 +497,7 @@ const VERSION = '2026-10-22.12';
   function hideRanking() {
     rankEl.hidden = true;
     rankSide.hidden = true;
+    overLayoutKey = ''; // 다음 게임 오버 때 배치를 다시 적용 (같은 화면 크기여도 rankSide 를 다시 보이게)
     rankName.blur();
   }
 
