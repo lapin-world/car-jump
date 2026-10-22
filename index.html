@@ -359,7 +359,11 @@
     return fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
       ...options,
       headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json', ...options.headers },
-    }).then((r) => { if (!r.ok) throw new Error(r.status); return r.status === 204 || r.status === 201 ? null : r.json(); });
+    }).then(async (r) => {
+      const text = await r.text(); // 본문이 비어 있는 응답(void 함수 등)도 처리
+      if (!r.ok) { console.error('Supabase', r.status, text); throw new Error(r.status); }
+      return text ? JSON.parse(text) : null;
+    });
   }
 
   async function loadRanking() {
