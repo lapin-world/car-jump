@@ -23,15 +23,6 @@
   html, body { margin: 0; height: 100%; background: #020617; overflow: hidden; }
   body { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
   canvas { display: block; width: 100vw; height: 100vh; }
-  /* 모바일 전용: 흔들어서 점프 켜기/끄기 버튼 */
-  #shake-btn {
-    position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%);
-    padding: 12px 20px; border: 1px solid rgba(148,197,255,0.5); border-radius: 999px;
-    background: rgba(15,23,42,0.85); color: #f8fafc; font: 600 15px system-ui, sans-serif;
-    white-space: nowrap;
-  }
-  #shake-btn.on { background: rgba(251,191,36,0.9); color: #111827; border-color: #fbbf24; }
-  #shake-btn[hidden] { display: none; }
   /* 게임 오버 시 랭킹 패널 */
   #rank {
     position: fixed; left: 50%; top: calc(30% + 48px); transform: translateX(-50%);
@@ -70,7 +61,6 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<button id="shake-btn" type="button" hidden>📱 흔들어서 점프 켜기</button>
 <div id="rank" hidden>
   <form id="rank-form">
     <input id="rank-name" maxlength="12" placeholder="이름 (최대 12자)" autocomplete="off">
@@ -81,7 +71,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-22.4';
+const VERSION = '2026-10-22.5';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -202,53 +192,7 @@ const VERSION = '2026-10-22.4';
   window.addEventListener('pointercancel', () => { holding = false; });
   window.addEventListener('blur', () => { holding = false; });
 
-  // ---------- 모바일 전용: 프라이팬 뒤집듯 폰을 튕기면 점프 ----------
-  // 손목을 위로 꺾는 회전 속도 또는 순간 가속이 기준을 넘으면 점프로 인식 (PC에서는 비활성)
-  const SHAKE_ROTATION = 300;  // 회전 속도 기준 (deg/s)
-  const SHAKE_ACCEL = 15;      // 중력 제외 가속도 기준 (m/s²)
-  const SHAKE_COOLDOWN = 600;  // 한 번 튕길 때 중복 점프 방지 (ms)
-  const isMobile = window.matchMedia('(pointer: coarse)').matches && 'DeviceMotionEvent' in window;
-  const shakeBtn = document.getElementById('shake-btn');
-  let shakeOn = false;
-  let lastShake = 0;
-
-  function onMotion(e) {
-    const now = performance.now();
-    if (now - lastShake < SHAKE_COOLDOWN) return;
-    const r = e.rotationRate || {};
-    const a = e.acceleration || {};
-    const rotation = Math.max(Math.abs(r.beta || 0), Math.abs(r.gamma || 0));
-    const accel = Math.max(Math.abs(a.y || 0), Math.abs(a.z || 0));
-    if (rotation < SHAKE_ROTATION && accel < SHAKE_ACCEL) return;
-    lastShake = now;
-    if (navigator.vibrate) navigator.vibrate(30); // Android만 지원
-    handleInput();
-  }
-
-  async function toggleShake() {
-    if (shakeOn) {
-      window.removeEventListener('devicemotion', onMotion);
-      shakeOn = false;
-    } else {
-      // iOS Safari는 사용자 동작 안에서 센서 권한을 요청해야 함
-      if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        try {
-          if (await DeviceMotionEvent.requestPermission() !== 'granted') return;
-        } catch { return; }
-      }
-      window.addEventListener('devicemotion', onMotion);
-      shakeOn = true;
-    }
-    shakeBtn.classList.toggle('on', shakeOn);
-    shakeBtn.textContent = shakeOn ? '📱 흔들기 점프 ON' : '📱 흔들어서 점프 켜기';
-  }
-
-  if (isMobile) {
-    shakeBtn.hidden = false;
-    // 버튼 탭이 캔버스 점프로 전달되지 않도록 막음
-    shakeBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
-    shakeBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleShake(); });
-  }
+  const isTouch = window.matchMedia('(pointer: coarse)').matches; // 조작 안내 문구용 (탭 / 키보드)
 
   // ---------- 파티클 (불꽃 / 연기) ----------
 
@@ -1066,6 +1010,76 @@ const VERSION = '2026-10-22.4';
     }
   }
 
+  // 시작 화면: ① 제목·슬로건(브랜드) ② 시작 유도 한 줄 ③ 도로 아래 조작 안내 카드(낮은 대비)
+  function drawStartScreen(W, H) {
+    const y = H * 0.3;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '800 34px system-ui, sans-serif';
+    ctx.fillText('Kakao Taxi Jump', W / 2, y);
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 17px system-ui, sans-serif';
+    ctx.fillText('테슬라를 뛰어 넘어라 !', W / 2, y + 34);
+
+    ctx.globalAlpha = 0.6 + 0.3 * Math.cos(clock * Math.PI * 2 / 1.6); // 천천히 깜빡임
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '15px system-ui, sans-serif';
+    ctx.fillText(isTouch ? '화면을 탭해서 시작' : 'Enter / Space로 시작', W / 2, y + 84);
+    ctx.globalAlpha = 1;
+
+    const rows = [
+      [isTouch ? '탭' : 'Enter / Space', '점프'],
+      ['길게 누르기', '더 높이, 더 멀리'],
+      ['아슬아슬', '보너스 점수'],
+    ];
+    const ground = groundY * viewScale; // 화면 좌표 기준 도로 위치
+    const rowH = 30, padX = 16, padY = 12, gap = 12;
+    ctx.font = '600 12px system-ui, sans-serif';
+    const keyW = Math.max(...rows.map((r) => ctx.measureText(r[0]).width)) + 16;
+    ctx.font = '13px system-ui, sans-serif';
+    const descW = Math.max(...rows.map((r) => ctx.measureText(r[1]).width));
+    const cardW = padX * 2 + keyW + gap + descW;
+    const cardH = padY * 2 + rowH * rows.length - 8;
+    const space = H - ground;
+    if (space < cardH + 24) return; // 가로로 낮은 화면에서는 생략
+    const cx = (W - cardW) / 2, cy = ground + Math.min(space * 0.3, space - cardH - 12);
+
+    roundRect(cx, cy, cardW, cardH, 14);
+    ctx.fillStyle = 'rgba(15,23,42,0.6)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(148,163,184,0.18)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    rows.forEach(([key, desc], i) => {
+      const ry = cy + padY + i * rowH;
+      ctx.font = '600 12px system-ui, sans-serif';
+      const kw = ctx.measureText(key).width + 16;
+      const kx = cx + padX + keyW - kw;
+      roundRect(kx, ry, kw, 22, 6);
+      ctx.fillStyle = 'rgba(148,163,184,0.14)';
+      ctx.fill();
+      ctx.fillStyle = '#cbd5e1';
+      ctx.textAlign = 'center';
+      ctx.fillText(key, kx + kw / 2, ry + 15);
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'left';
+      ctx.fillText(desc, cx + padX + keyW + gap, ry + 15.5);
+    });
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#f8fafc';
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
   // HUD는 축소 없이 실제 화면 크기 기준으로 그림 (세로 화면에서도 글자 크기 유지)
   function drawHUD() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1089,19 +1103,7 @@ const VERSION = '2026-10-22.4';
       ctx.font = '12px system-ui, sans-serif';
       ctx.fillStyle = 'rgba(148,163,184,0.8)';
       ctx.fillText(`v${VERSION}`, 16, 24);
-      ctx.fillStyle = '#f8fafc';
-      ctx.textAlign = 'center';
-      ctx.font = 'bold 32px system-ui, sans-serif';
-      ctx.fillText('Kakao Taxi Jump', W / 2, H * 0.3);
-      ctx.font = '16px system-ui, sans-serif';
-      ctx.fillText('Enter / Space / 탭으로 점프', W / 2, H * 0.3 + 32);
-      ctx.fillText('테슬라를 뛰어 넘어라 !', W / 2, H * 0.3 + 54);
-      ctx.fillText('길게 누르면 더 높이, 더 멀리!', W / 2, H * 0.3 + 80);
-      ctx.fillText('차 위를 아슬아슬하게 넘으면 보너스', W / 2, H * 0.3 + 102);
-      if (shakeOn) {
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillText('폰을 위로 툭 튕기면 점프! (화면 회전 잠금 권장)', W / 2, H * 0.3 + 128);
-      }
+      drawStartScreen(W, H);
     } else if (state === 'over') {
       ctx.font = 'bold 32px system-ui, sans-serif';
       ctx.fillText('CRASH!', W / 2, H * 0.3);
