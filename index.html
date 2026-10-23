@@ -84,7 +84,7 @@
 <div id="rank-side" hidden></div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.8';
+const VERSION = '2026-10-23.9';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -103,7 +103,7 @@ const VERSION = '2026-10-23.8';
   const HOLD_MAX = 0.35;
   const NEAR_MISS = 16;     // 차량 위를 이 높이(px) 이내로 스치면 '아슬아슬'
   const MAX_COMBO_BONUS = 3;
-  // 라이벌 차량: 차량을 ROLL_AFTER대 넘긴 뒤부터 가끔(ROLL_CHANCE) 우리 차와 같은 모델(노랑 단색 랩핑)이
+  // 라이벌 차량: 차량을 ROLL_AFTER대 넘긴 뒤부터 가끔(ROLL_CHANCE) 우리 차와 같은 모델(민트 단색 랩핑)이
   // 배럴롤 점프로 우리 차를 뛰어넘어 뒤로 지나감. 가만히 있으면 머리 위로 지나가고, 그 순간 점프하면 공중 충돌.
   // 체공 시간은 속도와 상관없이 ROLL_TIME초로 고정해 우리 차처럼 느긋하게 돎
   const ROLL_AFTER = 50;
@@ -745,8 +745,8 @@ const VERSION = '2026-10-23.8';
     return (u > -24 && u < -16) || (u > -10 && u < -2) ? YELLOW : BODY;
   }
   const TAXI = { color: wrapColor, taxi: true };
-  // 라이벌: 같은 차체에 노랑 단색 랩핑 (택시 스트라이프·도어 데칼·루프 표시등 없음)
-  const RIVAL_YELLOW = { color: () => '#facc15', taxi: false };
+  // 라이벌: 같은 차체에 민트 단색 랩핑 (택시 스트라이프·도어 데칼·루프 표시등 없음)
+  const RIVAL_MINT = { color: () => '#6ee7b7', taxi: false };
 
   function topAt(x) {
     for (let i = 1; i < PROFILE.length; i++) {
@@ -836,7 +836,7 @@ const VERSION = '2026-10-23.8';
   }
 
   const MESH = buildMesh(TAXI);
-  const RIVAL_MESH = buildMesh(RIVAL_YELLOW);
+  const RIVAL_MESH = buildMesh(RIVAL_MINT);
   const WHEELS = [];
   for (const x of [-32, 33]) for (const side of [1, -1]) WHEELS.push({ x, z: (HALF_WIDTH + 0.6) * side });
 
