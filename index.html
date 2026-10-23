@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.12';
+const VERSION = '2026-10-23.13';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1310,24 +1310,63 @@ const VERSION = '2026-10-23.12';
     return x2 > x1 ? [x1, x2] : null;
   }
 
+  // 플레드(타탄 체크) 무늬: 같은 줄무늬를 가로·세로로 겹쳐 교차 부분이 진해지게 한 타일을 반복
+  // [시작 위치, 폭, 색] — 남색 바탕에 게임 테마색(핑크·시안·카카오 노랑) 줄
+  const PLAID = 120;
+  const PLAID_BANDS = [
+    [0, 44, 'rgba(244,114,182,0.24)'],
+    [58, 14, 'rgba(103,232,249,0.24)'],
+    [86, 3, 'rgba(251,191,36,0.6)'],
+    [100, 6, 'rgba(2,6,23,0.45)'],
+  ];
+  let plaidPattern = null;
+
+  function plaid() {
+    if (plaidPattern) return plaidPattern;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = PLAID * 2; // 2배 해상도로 그려 확대 화면에서도 선명하게
+    const g = cv.getContext('2d');
+    g.scale(2, 2);
+    g.fillStyle = '#0b1a33';
+    g.fillRect(0, 0, PLAID, PLAID);
+    for (const [p, w, c] of PLAID_BANDS) {
+      g.fillStyle = c;
+      g.fillRect(0, p, PLAID, w);
+      g.fillRect(p, 0, w, PLAID);
+    }
+    // 원단 결 느낌의 가는 사선
+    g.strokeStyle = 'rgba(255,255,255,0.035)';
+    g.lineWidth = 1;
+    for (let d = -PLAID; d < PLAID; d += 4) {
+      g.beginPath(); g.moveTo(d, PLAID); g.lineTo(d + PLAID, 0); g.stroke();
+    }
+    plaidPattern = ctx.createPattern(cv, 'repeat');
+    return plaidPattern;
+  }
+
+  // 터널 입구 기준으로 무늬를 고정해 터널과 함께 흘러가게 채움
+  function fillPlaid(x, y, w, h) {
+    const ox = tunnel.x, oy = groundY - TUNNEL_TOP;
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.scale(0.5, 0.5);
+    ctx.fillStyle = plaid();
+    ctx.fillRect((x - ox) * 2, (y - oy) * 2, w * 2, h * 2);
+    ctx.restore();
+  }
+
   function drawTunnelBack() {
     const span = tunnelSpan();
     if (!span) return;
     const [x1, x2] = span;
     const top = groundY - TUNNEL_TOP;
-    const inside = ctx.createLinearGradient(0, top, 0, groundY);
-    inside.addColorStop(0, 'rgba(15,23,42,0.97)');
-    inside.addColorStop(1, 'rgba(8,47,73,0.92)');
-    ctx.fillStyle = inside;
+    fillPlaid(x1, top, x2 - x1, TUNNEL_TOP);
+    // 차량이 잘 보이도록 아래쪽으로 갈수록 어둡게
+    const shade = ctx.createLinearGradient(0, top, 0, groundY);
+    shade.addColorStop(0, 'rgba(2,6,23,0.15)');
+    shade.addColorStop(1, 'rgba(2,6,23,0.5)');
+    ctx.fillStyle = shade;
     ctx.fillRect(x1, top, x2 - x1, TUNNEL_TOP);
-    // 튜브 골조(링)
-    ctx.strokeStyle = 'rgba(56,189,248,0.14)';
-    ctx.lineWidth = 3;
-    const start = tunnel.x + ((x1 - tunnel.x) - ((x1 - tunnel.x) % 120));
-    for (let x = start; x < x2; x += 120) {
-      if (x < x1) continue;
-      ctx.beginPath(); ctx.moveTo(x, groundY - TUNNEL_CEIL); ctx.lineTo(x, groundY); ctx.stroke();
-    }
     // 바닥 네온 라인
     ctx.fillStyle = 'rgba(244,114,182,0.6)';
     ctx.fillRect(x1, groundY - 3, x2 - x1, 3);
@@ -1339,9 +1378,10 @@ const VERSION = '2026-10-23.12';
     const [x1, x2] = span;
     const top = groundY - TUNNEL_TOP, ceil = groundY - TUNNEL_CEIL;
     // 천장 레일 (바깥 튜브)
+    fillPlaid(x1, top, x2 - x1, TUNNEL_TOP - TUNNEL_CEIL);
     const shell = ctx.createLinearGradient(0, top, 0, ceil);
-    shell.addColorStop(0, '#334155');
-    shell.addColorStop(1, '#0f172a');
+    shell.addColorStop(0, 'rgba(51,65,85,0.45)');
+    shell.addColorStop(1, 'rgba(2,6,23,0.7)');
     ctx.fillStyle = shell;
     ctx.fillRect(x1, top, x2 - x1, TUNNEL_TOP - TUNNEL_CEIL);
     ctx.fillStyle = 'rgba(103,232,249,0.9)';
