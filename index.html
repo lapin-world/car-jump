@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.26';
+const VERSION = '2026-10-23.27';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -320,6 +320,17 @@ const VERSION = '2026-10-23.26';
     obstacles.push({ type, w: type.w, h: type.h, x, passed: false, minClear: Infinity });
   }
 
+  // 라이벌: 차체 중심이 우리 차 위를 정점으로 지나가도록 이륙·착지 지점을 잡음 (터널 안에서는 이륙하지 않음)
+  function addRival(x) {
+    const o = {
+      type: RIVAL, w: RIVAL.w, h: RIVAL.h, x, passed: false, minClear: Infinity,
+      rival: true, jumpAt: player.x + OVER_SPAN / 2 - RIVAL.w / 2, land: player.x - OVER_SPAN / 2 - RIVAL.w / 2, peak: OVER_HOP,
+      t: -1, p: 0, hop: 0, roll: 0, pitch: 0, landed: false, wheel: 0,
+    };
+    obstacles.push(o);
+    return o;
+  }
+
   // 장애물 패턴: 단일 차량 / 2~3대 연속(길게 누르기)
   // 연속 차량은 길게 누른 점프로 넘을 수 있는 속도 구간에서만 등장. 반환값은 다음 생성까지 추가 대기 시간
   function spawnObstacle() {
@@ -329,17 +340,11 @@ const VERSION = '2026-10-23.26';
     if (speed >= 650 && r < 0.15) count = 3;
     else if (speed >= 450 && r < 0.4) count = 2;
     if (count === 1 && carsPassed >= ROLL_AFTER && Math.random() < ROLL_CHANCE) {
-      // 차체 중심이 우리 차 위를 정점으로 지나가도록 이륙·착지 지점을 잡고, 앞 차량과 겹치지 않게 조금 더 뒤에서 등장
-      const jumpAt = player.x + OVER_SPAN / 2 - RIVAL.w / 2;
-      const land = player.x - OVER_SPAN / 2 - RIVAL.w / 2;
+      // 앞 차량과 겹치지 않게 조금 더 뒤에서 등장
       const x = x0 + speed * 0.3;
-      obstacles.push({
-        type: RIVAL, w: RIVAL.w, h: RIVAL.h, x, passed: false, minClear: Infinity,
-        rival: true, jumpAt, land, peak: OVER_HOP,
-        t: -1, p: 0, hop: 0, roll: 0, pitch: 0, landed: false, wheel: 0,
-      });
+      const o = addRival(x);
       // 우리 차 위를 지나갈 때까지 다음 차량이 오지 않게 함 (점프해야 하는 상황과 겹치지 않도록)
-      return (x - jumpAt) / speed + ROLL_TIME + 0.3;
+      return (x - o.jumpAt) / speed + ROLL_TIME + 0.3;
     }
     let x = x0;
     for (let i = 0; i < count; i++) {
@@ -391,8 +396,9 @@ const VERSION = '2026-10-23.26';
     const end = tunnel.x + tunnel.len;
     if (x0 < tunnel.x + speed * 0.9) return 0.15;
     if (x0 + 170 < end - 700) {
-      const type = randomType();
-      addCar(type, x0);
+      // 라이벌도 가끔 등장하지만 터널 안이라 뛰지 않고 바닥에 붙어 아래로 지나감 (updateRival)
+      if (carsPassed >= ROLL_AFTER && Math.random() < ROLL_CHANCE) addRival(x0);
+      else addCar(randomType(), x0);
       obstacles[obstacles.length - 1].fever = true;
       return 0.55 + Math.random() * 0.7;
     }
@@ -559,9 +565,10 @@ const VERSION = '2026-10-23.26';
       if (!o.passed && behind) {
         o.passed = true;
         carsPassed++;
-        score += o.type.points * (o.fever ? 2 : 1);
-        if (o.rival) popup(`안전운전 +${o.type.points}점`, '#facc15');
-        if (o.fever) popup(`FEVER +${o.type.points * 2}`, '#f472b6');
+        const pts = o.type.points * (o.fever ? 2 : 1);
+        score += pts;
+        if (o.rival) popup(`안전운전 +${pts}점`, o.fever ? '#f472b6' : '#facc15');
+        else if (o.fever) popup(`FEVER +${pts}`, '#f472b6');
         if (!player.onGround && !o.rival) {
           player.jumpClears++;
           if (o.minClear < NEAR_MISS) player.jumpNear++;
@@ -1309,6 +1316,11 @@ const VERSION = '2026-10-23.26';
     if (o.landed) return;
     if (o.t < 0) {
       if (o.x > o.jumpAt) return;
+      // 터널 안에서는 천장 때문에 뛰지 않고 바닥에 붙어 그대로 지나감
+      if (tunnel && o.x < tunnel.x + tunnel.len && o.x + o.w > tunnel.x) {
+        o.landed = true;
+        return;
+      }
       o.t = 0; // 이륙
       smoke(o.x + o.w / 2, groundY - 4, 10, o.w * 0.6);
     }
