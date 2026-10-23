@@ -84,7 +84,7 @@
 <div id="rank-side" hidden></div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.7';
+const VERSION = '2026-10-23.8';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -376,10 +376,13 @@ const VERSION = '2026-10-23.7';
     for (const o of obstacles) {
       o.x -= speed * dt;
       if (o.rival) updateRival(o, dt);
-      if (!o.passed && o.x + o.w < player.x - 45) {
+      // 라이벌은 판정 범위가 우리 차 뒤로 완전히 벗어난 뒤에 통과 처리 (보너스 표시 후 충돌하는 일이 없도록)
+      const behind = o.rival ? o.x + o.w * 0.92 < player.x - 44 * CAR_SCALE : o.x + o.w < player.x - 45;
+      if (!o.passed && behind) {
         o.passed = true;
         carsPassed++;
         score += o.type.points;
+        if (o.rival) popup(`라이벌 통과! +${o.type.points}`, '#facc15');
         if (!player.onGround && !o.rival) {
           player.jumpClears++;
           if (o.minClear < NEAR_MISS) player.jumpNear++;
@@ -1057,7 +1060,7 @@ const VERSION = '2026-10-23.7';
 
   // ---------- 라이벌 차량 (우리 차와 같은 모델, 왼쪽을 향해 달려옴) ----------
   // 판정용 크기: 차체 길이 약 106, 바퀴 아래~지붕 약 36 (모델 단위) × CAR_SCALE
-  const RIVAL = { name: 'rival', w: Math.round(106 * CAR_SCALE), h: Math.round(36 * CAR_SCALE), hitTop: 0.25, points: 2 };
+  const RIVAL = { name: 'rival', w: Math.round(106 * CAR_SCALE), h: Math.round(36 * CAR_SCALE), hitTop: 0.25, points: 5 }; // 통과 시 보너스 5점
 
   function updateRival(o, dt) {
     o.wheel += speed * dt / 14;
