@@ -84,7 +84,7 @@
 <div id="rank-side" hidden></div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.5';
+const VERSION = '2026-10-23.6';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -109,7 +109,8 @@ const VERSION = '2026-10-23.5';
   const ROLL_AFTER = 50;
   const ROLL_CHANCE = 0.2;
   const ROLL_TIME = 1.1;  // 체공 시간(초) — 우리 차 탭 점프 0.9초, 길게 누르기 1.26초
-  const OVER_HOP = 200;   // 뛰어넘기 최고 높이 — 지면의 우리 차(약 64)는 통과, 탭 점프 정점(약 240)과는 충돌
+  // 뛰어넘기 최고 높이: 우리 차 위를 지날 때 라이벌 바닥이 약 317 이상 → 길게 누른 점프(정점 약 333)로도 위로 넘을 수 없고 충돌
+  const OVER_HOP = 380;
   const OVER_SPAN = 700;  // 뛰어넘는 동안 이동 거리 (정점이 우리 차 바로 위)
   const PLAYER_H = 64;    // 공중 충돌 판정용 우리 차 높이 (루프 표시등 포함)
 
@@ -133,8 +134,8 @@ const VERSION = '2026-10-23.5';
   // 세로 화면(좁은 폭)에서도 다가오는 차량이 충분히 보이도록
   // 게임 월드를 최소 VIEW_MIN_W 논리 폭으로 잡고 화면에 맞게 축소해서 그림
   const VIEW_MIN_W = 820;
-  // 가로로 낮은 화면(모바일 가로 모드)에서도 길게 누른 점프(최고 약 333px)가 화면 안에 들어오도록 최소 논리 높이도 보장
-  const VIEW_MIN_H = 600;
+  // 가로로 낮은 화면(모바일 가로 모드)에서도 길게 누른 점프(최고 약 333px)와 라이벌 뛰어넘기(최고 380px)가 화면 안에 들어오도록 최소 논리 높이도 보장
+  const VIEW_MIN_H = 660;
   let W = 0, H = 0, groundY = 0;  // 게임 월드(논리) 크기
   let SW = 0, SH = 0, viewScale = 1, dpr = 1; // 실제 화면 크기와 축소 배율
   let state = 'ready'; // ready | playing | over
