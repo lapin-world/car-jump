@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.21';
+const VERSION = '2026-10-23.22';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1313,7 +1313,7 @@ const VERSION = '2026-10-23.21';
   // 플레드 터널: 테슬라 Model S Plaid 발표 영상처럼 검정 바탕에
   // 세로줄은 흰색 → 검정 → 빨강 → 흰색 순서로 같은 두께로 반복, 가로줄은 얇은 흰 선 4개
   // 흰색 다음 반복의 흰색이 바로 붙는 곳에만 두께의 1/4 검정 틈을 넣어 구분
-  const STRIPE_W = 12; // 세로줄 두께 (흰·검정·빨강 모두 동일)
+  const STRIPE_W = 24; // 세로줄 두께 (흰·검정·빨강 모두 동일)
   const PLAID = STRIPE_W * 4 + STRIPE_W / 4; // 세로줄 반복 폭
   const V_STRIPES = [ // [시작 위치, 색] — 검정 줄과 틈은 검정 바탕
     [0, 'rgba(255,255,255,0.92)'],
