@@ -1,6 +1,7 @@
 -- 랭킹 초기화 문구: 이 문구를 이름으로 등록하면 랭킹 전체가 초기화됨
 -- 문구 자체는 GitHub 에 올리지 않음. 아래 '<리셋 문구>' 를 실제 문구로 바꿔 SQL Editor 에서 한 번 실행
 -- (DB 에는 문구가 아닌 SHA-256 해시만 저장. private 스키마는 API 로 노출되지 않음)
+-- 비교 전 공백·문장부호(! ！ 등)를 지우고 유니코드 정규화(NFC)하므로 느낌표 유무와 상관없이 일치
 
 create extension if not exists pgcrypto with schema extensions;
 
@@ -8,7 +9,8 @@ create extension if not exists pgcrypto with schema extensions;
 create schema if not exists private;
 create table if not exists private.settings (key text primary key, value text not null);
 insert into private.settings (key, value)
-values ('reset_hash', encode(extensions.digest('<리셋 문구>', 'sha256'), 'hex'))
+values ('reset_hash', encode(extensions.digest(
+  regexp_replace(normalize('<리셋 문구>', NFC), '[[:space:][:punct:]！？]', '', 'g'), 'sha256'), 'hex'))
 on conflict (key) do update set value = excluded.value;
 
 -- 2) 등록 함수 교체: 반환값 'reset' | 'ok'
@@ -21,7 +23,8 @@ security definer
 set search_path = public
 as $$
 begin
-  if encode(extensions.digest(trim(p_name), 'sha256'), 'hex')
+  if encode(extensions.digest(
+       regexp_replace(normalize(p_name, NFC), '[[:space:][:punct:]！？]', '', 'g'), 'sha256'), 'hex')
      = (select value from private.settings where key = 'reset_hash') then
     delete from public.scores where true;
     return 'reset';
