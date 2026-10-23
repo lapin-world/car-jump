@@ -84,7 +84,7 @@
 <div id="rank-side" hidden></div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.2';
+const VERSION = '2026-10-23.3';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -110,6 +110,11 @@ const VERSION = '2026-10-23.2';
   const ROLL_CHANCE = 0.2;
   const ROLL_HOP = 260;   // 점프 최고 높이(px) — 우리 차 탭 점프(약 186)와 길게 누르기(약 333) 사이
   const ROLL_TIME = 1.1;  // 체공 시간(초) — 우리 차 탭 점프 0.9초, 길게 누르기 1.26초
+  // 라이벌의 절반은 우리 차를 뛰어넘어 뒤로 지나감: 가만히 있으면 머리 위로 지나가고, 그 순간 점프하면 공중 충돌
+  const OVER_CHANCE = 0.5;
+  const OVER_HOP = 200;   // 뛰어넘기 최고 높이 — 지면의 우리 차(약 64)는 통과, 탭 점프 정점(약 240)과는 충돌
+  const OVER_SPAN = 700;  // 뛰어넘는 동안 이동 거리 (정점이 우리 차 바로 위)
+  const PLAYER_H = 64;    // 공중 충돌 판정용 우리 차 높이 (루프 표시등 포함)
 
   // 장애물 차량: 테슬라 차종 이미지 (모두 왼쪽을 향하도록 배경 제거·반전한 PNG)
   // w: 화면 표시 폭(px), hitTop: 이미지 위쪽에서 판정 제외 비율, points: 넘었을 때 점수
@@ -277,12 +282,19 @@ const VERSION = '2026-10-23.2';
     if (speed >= 650 && r < 0.15) count = 3;
     else if (speed >= 450 && r < 0.4) count = 2;
     if (count === 1 && carsPassed >= ROLL_AFTER && Math.random() < ROLL_CHANCE) {
-      const jumpAt = W * 0.88, land = player.x + 150;
+      const over = Math.random() < OVER_CHANCE;
+      // 뛰어넘기: 차체 중심이 우리 차 위를 정점으로 지나가도록 이륙·착지 지점을 잡고, 앞 차량과 겹치지 않게 조금 더 뒤에서 등장
+      const jumpAt = over ? player.x + OVER_SPAN / 2 - RIVAL.w / 2 : W * 0.88;
+      const land = over ? player.x - OVER_SPAN / 2 - RIVAL.w / 2 : player.x + 150;
+      const x = over ? x0 + speed * 0.3 : x0;
       obstacles.push({
-        type: RIVAL, w: RIVAL.w, h: RIVAL.h, x: x0, passed: false, minClear: Infinity,
-        rival: true, jumpAt, land, t: -1, p: 0, hop: 0, roll: 0, pitch: 0, landed: false, wheel: 0,
+        type: RIVAL, w: RIVAL.w, h: RIVAL.h, x, passed: false, minClear: Infinity,
+        rival: true, over, jumpAt, land, peak: over ? OVER_HOP : ROLL_HOP,
+        t: -1, p: 0, hop: 0, roll: 0, pitch: 0, landed: false, wheel: 0,
       });
-      // 공중에서는 도로보다 느리게 다가오므로, 그만큼 다음 차량 생성을 늦춰 간격 유지
+      // 공중에서는 도로보다 느리게 다가오므로, 그만큼 다음 차량 생성을 늦춰 간격 유지.
+      // 뛰어넘기는 우리 차 위를 지나갈 때까지 다음 차량이 오지 않게 함
+      if (over) return (x - jumpAt) / speed + ROLL_TIME + 0.3;
       return Math.max(0, ROLL_TIME - (jumpAt - land) / speed) + 0.2;
     }
     let x = x0;
@@ -373,7 +385,7 @@ const VERSION = '2026-10-23.2';
         o.passed = true;
         carsPassed++;
         score += o.type.points;
-        if (!player.onGround) {
+        if (!player.onGround && !o.over) {
           player.jumpClears++;
           if (o.minClear < NEAR_MISS) player.jumpNear++;
         }
@@ -386,6 +398,15 @@ const VERSION = '2026-10-23.2';
     const px1 = player.x - half, px2 = player.x + half;
     const pBottom = groundY - player.y;
     for (const o of obstacles) {
+      if (o.rival && o.hop > 0) {
+        // 공중의 라이벌: 높이 구간 [hop, hop + 차 높이]와 우리 차 [y, y + PLAYER_H]가 겹치면 공중 충돌
+        if (px2 > o.x + o.w * 0.08 && px1 < o.x + o.w * 0.92
+          && player.y + PLAYER_H > o.hop && player.y < o.hop + o.h * (1 - o.type.hitTop)) {
+          gameOver();
+          break;
+        }
+        continue;
+      }
       // 이미지 여백을 감안해 좌우 8%, 위쪽 hitTop 비율만큼 판정 제외
       const oTop = groundY - o.h * (1 - o.type.hitTop);
       if (px2 > o.x + o.w * 0.08 && px1 < o.x + o.w * 0.92) {
@@ -1056,9 +1077,9 @@ const VERSION = '2026-10-23.2';
     o.p = p;
     o.x = o.jumpAt + (o.land - o.jumpAt) * p;
     // 포물선 궤적 + 플레이어 배럴롤과 같은 이징(천천히 → 정점 부근 빠르게 → 착지 전 천천히) + 기수 들림
-    o.hop = 4 * ROLL_HOP * p * (1 - p);
+    o.hop = 4 * o.peak * p * (1 - p);
     o.roll = Math.PI * 2 * (p - Math.sin(2 * Math.PI * p) / (2 * Math.PI));
-    o.pitch = Math.atan2(4 * ROLL_HOP * (1 - 2 * p) / ROLL_TIME, speed) * 0.35;
+    o.pitch = Math.atan2(4 * o.peak * (1 - 2 * p) / ROLL_TIME, speed) * 0.35;
     if (p >= 1) {
       o.landed = true;
       o.hop = 0;
@@ -1071,7 +1092,7 @@ const VERSION = '2026-10-23.2';
   function drawRival(o) {
     const cx = o.x + o.w / 2;
     const cy = groundY - o.hop - AXIS_Y * CAR_SCALE;
-    const k = 1 - o.hop / (ROLL_HOP * 2);
+    const k = 1 - o.hop / (o.peak * 2);
     ctx.fillStyle = `rgba(0,0,0,${0.45 * k})`;
     ctx.beginPath();
     ctx.ellipse(cx, groundY + 1, o.w * 0.48 * k, 5 * k, 0, 0, Math.PI * 2);
