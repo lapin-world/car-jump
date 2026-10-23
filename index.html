@@ -84,7 +84,7 @@
 <div id="rank-side" hidden></div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.3';
+const VERSION = '2026-10-23.4';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -104,14 +104,11 @@ const VERSION = '2026-10-23.3';
   const NEAR_MISS = 16;     // 차량 위를 이 높이(px) 이내로 스치면 '아슬아슬'
   const MAX_COMBO_BONUS = 3;
   // 라이벌 차량: 차량을 ROLL_AFTER대 넘긴 뒤부터 가끔(ROLL_CHANCE) 우리 차와 같은 모델(테슬라 레드 랩핑)이
-  // 배럴롤 점프하며 다가옴. 화면 오른쪽(W*0.88)에서 뛰어 플레이어 앞(player.x + 150)에 착지하므로
-  // 플레이어에게 닿을 때는 항상 땅 위. 체공 시간은 속도와 상관없이 ROLL_TIME초로 고정해 우리 차처럼 느긋하게 돎
+  // 배럴롤 점프로 우리 차를 뛰어넘어 뒤로 지나감. 가만히 있으면 머리 위로 지나가고, 그 순간 점프하면 공중 충돌.
+  // 체공 시간은 속도와 상관없이 ROLL_TIME초로 고정해 우리 차처럼 느긋하게 돎
   const ROLL_AFTER = 50;
   const ROLL_CHANCE = 0.2;
-  const ROLL_HOP = 260;   // 점프 최고 높이(px) — 우리 차 탭 점프(약 186)와 길게 누르기(약 333) 사이
   const ROLL_TIME = 1.1;  // 체공 시간(초) — 우리 차 탭 점프 0.9초, 길게 누르기 1.26초
-  // 라이벌의 절반은 우리 차를 뛰어넘어 뒤로 지나감: 가만히 있으면 머리 위로 지나가고, 그 순간 점프하면 공중 충돌
-  const OVER_CHANCE = 0.5;
   const OVER_HOP = 200;   // 뛰어넘기 최고 높이 — 지면의 우리 차(약 64)는 통과, 탭 점프 정점(약 240)과는 충돌
   const OVER_SPAN = 700;  // 뛰어넘는 동안 이동 거리 (정점이 우리 차 바로 위)
   const PLAYER_H = 64;    // 공중 충돌 판정용 우리 차 높이 (루프 표시등 포함)
@@ -282,20 +279,17 @@ const VERSION = '2026-10-23.3';
     if (speed >= 650 && r < 0.15) count = 3;
     else if (speed >= 450 && r < 0.4) count = 2;
     if (count === 1 && carsPassed >= ROLL_AFTER && Math.random() < ROLL_CHANCE) {
-      const over = Math.random() < OVER_CHANCE;
-      // 뛰어넘기: 차체 중심이 우리 차 위를 정점으로 지나가도록 이륙·착지 지점을 잡고, 앞 차량과 겹치지 않게 조금 더 뒤에서 등장
-      const jumpAt = over ? player.x + OVER_SPAN / 2 - RIVAL.w / 2 : W * 0.88;
-      const land = over ? player.x - OVER_SPAN / 2 - RIVAL.w / 2 : player.x + 150;
-      const x = over ? x0 + speed * 0.3 : x0;
+      // 차체 중심이 우리 차 위를 정점으로 지나가도록 이륙·착지 지점을 잡고, 앞 차량과 겹치지 않게 조금 더 뒤에서 등장
+      const jumpAt = player.x + OVER_SPAN / 2 - RIVAL.w / 2;
+      const land = player.x - OVER_SPAN / 2 - RIVAL.w / 2;
+      const x = x0 + speed * 0.3;
       obstacles.push({
         type: RIVAL, w: RIVAL.w, h: RIVAL.h, x, passed: false, minClear: Infinity,
-        rival: true, over, jumpAt, land, peak: over ? OVER_HOP : ROLL_HOP,
+        rival: true, jumpAt, land, peak: OVER_HOP,
         t: -1, p: 0, hop: 0, roll: 0, pitch: 0, landed: false, wheel: 0,
       });
-      // 공중에서는 도로보다 느리게 다가오므로, 그만큼 다음 차량 생성을 늦춰 간격 유지.
-      // 뛰어넘기는 우리 차 위를 지나갈 때까지 다음 차량이 오지 않게 함
-      if (over) return (x - jumpAt) / speed + ROLL_TIME + 0.3;
-      return Math.max(0, ROLL_TIME - (jumpAt - land) / speed) + 0.2;
+      // 우리 차 위를 지나갈 때까지 다음 차량이 오지 않게 함 (점프해야 하는 상황과 겹치지 않도록)
+      return (x - jumpAt) / speed + ROLL_TIME + 0.3;
     }
     let x = x0;
     for (let i = 0; i < count; i++) {
@@ -385,7 +379,7 @@ const VERSION = '2026-10-23.3';
         o.passed = true;
         carsPassed++;
         score += o.type.points;
-        if (!player.onGround && !o.over) {
+        if (!player.onGround && !o.rival) {
           player.jumpClears++;
           if (o.minClear < NEAR_MISS) player.jumpNear++;
         }
