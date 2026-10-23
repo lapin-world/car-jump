@@ -1321,14 +1321,17 @@ const VERSION = '2026-10-23.14';
     [92, 6, 'rgba(255,150,40,0.4)'],
   ];
   const TUNNEL_DEPTH = 0.5; // 안쪽 벽 축척 (소실점 쪽으로 줄어드는 비율)
-  let plaidPattern = null;
+  // 확대·축소한 패턴으로 채우면 매 프레임 다시 샘플링해 느리므로,
+  // 화면 픽셀 크기에 맞춘 타일을 배율별로 한 번만 만들어 둠 (화면 크기가 바뀌면 비움)
+  let plaidCache = {};
 
-  function plaid() {
-    if (plaidPattern) return plaidPattern;
+  function plaid(scale) {
+    const px = Math.max(8, Math.round(PLAID * scale * viewScale * dpr));
+    if (plaidCache[px]) return plaidCache[px];
     const cv = document.createElement('canvas');
-    cv.width = cv.height = PLAID * 2; // 2배 해상도로 그려 확대 화면에서도 선명하게
+    cv.width = cv.height = px;
     const g = cv.getContext('2d');
-    g.scale(2, 2);
+    g.scale(px / PLAID, px / PLAID);
     g.fillStyle = '#070822';
     g.fillRect(0, 0, PLAID, PLAID);
     g.globalCompositeOperation = 'lighter'; // 줄이 겹치는 곳이 더 밝게 빛남
@@ -1343,17 +1346,19 @@ const VERSION = '2026-10-23.14';
       g.fillRect(i, 108, 3, 2);
       g.fillRect(108, i, 2, 3);
     }
-    plaidPattern = ctx.createPattern(g.canvas, 'repeat');
-    return plaidPattern;
+    plaidCache[px] = ctx.createPattern(cv, 'repeat');
+    return plaidCache[px];
   }
 
   // (ox, oy) 를 무늬 원점으로, scale 배율로 채움 → 터널과 함께 흘러감
+  // 화면 픽셀 좌표(정수 위치)에서 그려 패턴이 다시 샘플링되지 않게 함
   function fillPlaid(x, y, w, h, ox, oy, scale) {
+    const f = viewScale * dpr;
+    const dx = Math.round(ox * f), dy = Math.round(oy * f);
     ctx.save();
-    ctx.translate(ox, oy);
-    ctx.scale(scale / 2, scale / 2);
-    ctx.fillStyle = plaid();
-    ctx.fillRect((x - ox) * 2 / scale, (y - oy) * 2 / scale, w * 2 / scale, h * 2 / scale);
+    ctx.setTransform(1, 0, 0, 1, dx, dy);
+    ctx.fillStyle = plaid(scale);
+    ctx.fillRect(x * f - dx, y * f - dy, w * f, h * f);
     ctx.restore();
   }
 
@@ -1765,7 +1770,7 @@ const VERSION = '2026-10-23.14';
     requestAnimationFrame(loop);
   }
 
-  window.addEventListener('resize', () => { resize(); buildSprites(); });
+  window.addEventListener('resize', () => { resize(); buildSprites(); plaidCache = {}; });
   resize();
   buildSprites();
   reset();
