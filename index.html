@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.24';
+const VERSION = '2026-10-23.25';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1193,7 +1193,7 @@ const VERSION = '2026-10-23.24';
   }
 
   // 천장 매달리기 특수효과 (그립이 줄면 빨갛게 깜빡여 경고)
-  // back: 차 뒤 — 뒤로 흐르는 속도선 + 차체 아래 네온 언더글로우
+  // back: 차 뒤 — 뒤로 흐르는 속도선 + 차체 아래 네온 언더글로우 + 천장 쪽으로 누르는 다운포스(기류선·화살표)
   // front: 차 앞 — 바퀴와 천장 사이 자석 빛·전기 아크 + 연타 순간 퍼지는 빛
   function drawCeilingFx(x, grip, front) {
     const ceil = groundY - TUNNEL_CEIL;
@@ -1218,6 +1218,7 @@ const VERSION = '2026-10-23.24';
       ctx.scale(1, 0.25);
       glow(0, 0, 60 * CAR_SCALE, warn ? '248,113,113' : '244,114,182', 0.35 * flick);
       ctx.restore();
+      drawDownforce(x, ceil, rgb, flick);
     } else {
       const tap = Math.max(0, 1 - (clock - player.lastTap) / 0.15);
       ctx.strokeStyle = `rgba(${rgb},${0.9 * flick})`;
@@ -1235,6 +1236,48 @@ const VERSION = '2026-10-23.24';
       if (tap > 0) glow(x, ceil + 20, 90 * tap + 20, '255,255,255', 0.3 * tap);
     }
     ctx.restore();
+  }
+
+  // 다운포스: 차체를 감싸고 흐르는 기류선(뒤로 흐르는 점선)과 천장 쪽을 가리키며 올라가는 화살표
+  function drawDownforce(x, ceil, rgb, flick) {
+    const bottom = groundY - CEIL_Y; // 뒤집힌 차의 가장 낮은 곳(루프 표시등)
+    const half = 53 * CAR_SCALE;
+    ctx.lineCap = 'round';
+    ctx.setLineDash([16, 10]);
+    ctx.lineDashOffset = clock * 320; // 진행 반대 방향(왼쪽)으로 흐름
+    for (let k = 0; k < 4; k++) {
+      const edge = ceil + 30 + k * 5, dip = bottom + 8 + k * 13;
+      ctx.strokeStyle = `rgba(${rgb},${(0.55 - k * 0.1) * flick})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + half + 70, edge);
+      ctx.bezierCurveTo(x + half * 0.6, dip, x - half * 0.6, dip, x - half - 90, edge);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    // 천장 쪽(위)으로 올라가며 사라지는 화살표
+    ctx.lineWidth = 3;
+    for (const ax of [-0.55, 0, 0.55]) {
+      for (let j = 0; j < 2; j++) {
+        const t = (clock * 1.6 + j * 0.5 + ax) % 1;
+        const ay = bottom + 62 - t * 46;
+        ctx.strokeStyle = `rgba(${rgb},${Math.sin(t * Math.PI) * 0.8 * flick})`;
+        ctx.beginPath();
+        ctx.moveTo(x + ax * half - 9, ay + 7);
+        ctx.lineTo(x + ax * half, ay);
+        ctx.lineTo(x + ax * half + 9, ay + 7);
+        ctx.stroke();
+      }
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.strokeStyle = 'rgba(2,6,23,0.85)';
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    ctx.strokeText('DOWNFORCE', x, bottom + 78);
+    ctx.fillStyle = `rgba(${rgb},${0.9 * flick})`;
+    ctx.fillText('DOWNFORCE', x, bottom + 78);
   }
 
   function drawRoadster() {
