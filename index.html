@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.13';
+const VERSION = '2026-10-23.14';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -405,7 +405,7 @@ const VERSION = '2026-10-23.13';
     const m = player.mode;
     if (m === 'ceiling' || m === 'toCeiling') {
       player.lastTap = clock;
-      if (m === 'ceiling') sparks(player.x + (Math.random() - 0.5) * 100, groundY - TUNNEL_CEIL + 4, 5, '#67e8f9');
+      if (m === 'ceiling') sparks(player.x + (Math.random() - 0.5) * 100, groundY - TUNNEL_CEIL + 4, 5, '#fbbf24');
       return true;
     }
     if (m) return true; // 추락·착지 중에는 입력 무시
@@ -444,7 +444,7 @@ const VERSION = '2026-10-23.13';
       if (p >= 1) {
         player.mode = 'ceiling';
         player.lastTap = clock;
-        sparks(player.x, groundY - TUNNEL_CEIL + 4, 12, '#67e8f9');
+        sparks(player.x, groundY - TUNNEL_CEIL + 4, 12, '#fbbf24');
       }
     } else if (player.mode === 'ceiling') {
       player.y = CEIL_Y;
@@ -1310,15 +1310,17 @@ const VERSION = '2026-10-23.13';
     return x2 > x1 ? [x1, x2] : null;
   }
 
-  // 플레드(타탄 체크) 무늬: 같은 줄무늬를 가로·세로로 겹쳐 교차 부분이 진해지게 한 타일을 반복
-  // [시작 위치, 폭, 색] — 남색 바탕에 게임 테마색(핑크·시안·카카오 노랑) 줄
+  // 플레드(타탄 체크) 터널: 남색 바탕에 빛나는 빨강·주황·금색 줄을 가로·세로로 겹치고,
+  // 천장·바닥·안쪽 벽을 화면 가운데 소실점으로 모이게 그려 끝에서 빛이 나오는 깊은 터널처럼 보이게 함
+  // [시작 위치, 폭, 색] (타일 PLAID 단위 반복)
   const PLAID = 120;
   const PLAID_BANDS = [
-    [0, 44, 'rgba(244,114,182,0.24)'],
-    [58, 14, 'rgba(103,232,249,0.24)'],
-    [86, 3, 'rgba(251,191,36,0.6)'],
-    [100, 6, 'rgba(2,6,23,0.45)'],
+    [0, 40, 'rgba(190,36,24,0.26)'],
+    [52, 12, 'rgba(255,128,24,0.5)'],
+    [76, 3, 'rgba(255,196,80,0.95)'],
+    [92, 6, 'rgba(255,150,40,0.4)'],
   ];
+  const TUNNEL_DEPTH = 0.5; // 안쪽 벽 축척 (소실점 쪽으로 줄어드는 비율)
   let plaidPattern = null;
 
   function plaid() {
@@ -1327,48 +1329,133 @@ const VERSION = '2026-10-23.13';
     cv.width = cv.height = PLAID * 2; // 2배 해상도로 그려 확대 화면에서도 선명하게
     const g = cv.getContext('2d');
     g.scale(2, 2);
-    g.fillStyle = '#0b1a33';
+    g.fillStyle = '#070822';
     g.fillRect(0, 0, PLAID, PLAID);
+    g.globalCompositeOperation = 'lighter'; // 줄이 겹치는 곳이 더 밝게 빛남
     for (const [p, w, c] of PLAID_BANDS) {
       g.fillStyle = c;
       g.fillRect(0, p, PLAID, w);
       g.fillRect(p, 0, w, PLAID);
     }
-    // 원단 결 느낌의 가는 사선
-    g.strokeStyle = 'rgba(255,255,255,0.035)';
-    g.lineWidth = 1;
-    for (let d = -PLAID; d < PLAID; d += 4) {
-      g.beginPath(); g.moveTo(d, PLAID); g.lineTo(d + PLAID, 0); g.stroke();
+    // 어두운 칸 사이의 파란 점선 조명
+    g.fillStyle = 'rgba(96,130,255,0.7)';
+    for (let i = 0; i < PLAID; i += 8) {
+      g.fillRect(i, 108, 3, 2);
+      g.fillRect(108, i, 2, 3);
     }
-    plaidPattern = ctx.createPattern(cv, 'repeat');
+    plaidPattern = ctx.createPattern(g.canvas, 'repeat');
     return plaidPattern;
   }
 
-  // 터널 입구 기준으로 무늬를 고정해 터널과 함께 흘러가게 채움
-  function fillPlaid(x, y, w, h) {
-    const ox = tunnel.x, oy = groundY - TUNNEL_TOP;
+  // (ox, oy) 를 무늬 원점으로, scale 배율로 채움 → 터널과 함께 흘러감
+  function fillPlaid(x, y, w, h, ox, oy, scale) {
     ctx.save();
     ctx.translate(ox, oy);
-    ctx.scale(0.5, 0.5);
+    ctx.scale(scale / 2, scale / 2);
     ctx.fillStyle = plaid();
-    ctx.fillRect((x - ox) * 2, (y - oy) * 2, w * 2, h * 2);
+    ctx.fillRect((x - ox) * 2 / scale, (y - oy) * 2 / scale, w * 2 / scale, h * 2 / scale);
     ctx.restore();
+  }
+
+  function poly(pts) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
   }
 
   function drawTunnelBack() {
     const span = tunnelSpan();
     if (!span) return;
     const [x1, x2] = span;
-    const top = groundY - TUNNEL_TOP;
-    fillPlaid(x1, top, x2 - x1, TUNNEL_TOP);
-    // 차량이 잘 보이도록 아래쪽으로 갈수록 어둡게
-    const shade = ctx.createLinearGradient(0, top, 0, groundY);
-    shade.addColorStop(0, 'rgba(2,6,23,0.15)');
-    shade.addColorStop(1, 'rgba(2,6,23,0.5)');
-    ctx.fillStyle = shade;
-    ctx.fillRect(x1, top, x2 - x1, TUNNEL_TOP);
+    const ceil = groundY - TUNNEL_CEIL;
+    const vx = W / 2, vy = groundY - TUNNEL_CEIL / 2, k = TUNNEL_DEPTH;
+    const bx = (x) => vx + (x - vx) * k, by = (y) => vy + (y - vy) * k;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x1, ceil, x2 - x1, TUNNEL_CEIL);
+    ctx.clip();
+    ctx.fillStyle = '#05061a';
+    ctx.fillRect(x1, ceil, x2 - x1, TUNNEL_CEIL);
+
+    // 안쪽 벽: 원근만큼 작고 느리게 흐르는 플레드 (화면 밖까지 이어진 터널 전체 기준)
+    const tx1 = tunnel.x, tx2 = tunnel.x + tunnel.len;
+    const wx = bx(tx1), wy = by(ceil), ww = bx(tx2) - wx, wh = by(groundY) - wy;
+    fillPlaid(wx, wy, ww, wh, bx(tunnel.x), wy, k);
+
+    // 천장·바닥 면: 세로줄은 소실점으로 모이고, 가로줄은 멀수록 촘촘해짐
+    const D = PLAID * 2;               // 면의 깊이 (타일 2장)
+    const F = D * k / (1 - k);          // 깊이 D 에서 축척이 k 가 되는 원근 거리
+    for (const fy of [ceil, groundY]) {
+      const backY = by(fy);
+      ctx.save();
+      poly([[tx1, fy], [tx2, fy], [bx(tx2), backY], [bx(tx1), backY]]);
+      ctx.clip();
+      ctx.fillStyle = '#070822';
+      ctx.fillRect(x1, Math.min(fy, backY), x2 - x1, Math.abs(backY - fy));
+      ctx.globalCompositeOperation = 'lighter';
+      // 화면 밖 줄도 소실점 쪽으로 화면 안에 들어오므로, 원근 역산으로 보이는 범위를 구함
+      const fx = (x) => vx + (x - vx) / k;
+      const from = Math.max(tx1, Math.min(x1, fx(x1))), to = Math.min(tx2, Math.max(x2, fx(x2)));
+      const first = tunnel.x + Math.floor((from - tunnel.x) / PLAID) * PLAID;
+      for (let gx = first; gx < to; gx += PLAID) {
+        for (const [o, w, c] of PLAID_BANDS) {
+          ctx.fillStyle = c;
+          poly([[gx + o, fy], [gx + o + w, fy], [bx(gx + o + w), backY], [bx(gx + o), backY]]);
+          ctx.fill();
+        }
+      }
+      const depthY = (z) => vy + (fy - vy) * F / (F + z);
+      for (let t = 0; t < D; t += PLAID) {
+        for (const [o, w, c] of PLAID_BANDS) {
+          const ya = depthY(t + o), yb = depthY(t + o + w);
+          ctx.fillStyle = c;
+          ctx.fillRect(x1, Math.min(ya, yb), x2 - x1, Math.abs(yb - ya));
+        }
+      }
+      ctx.restore();
+    }
+
+    // 입구·출구 쪽 옆벽: 가로줄은 소실점으로 모이고, 세로줄은 멀수록 촘촘해짐
+    // (보이는 쪽 벽만 화면 안 터널 영역에 들어오므로 양쪽 모두 그려도 됨)
+    for (const ex of [tx1, tx2]) {
+      const bex = bx(ex);
+      ctx.save();
+      poly([[ex, ceil], [bex, by(ceil)], [bex, by(groundY)], [ex, groundY]]);
+      ctx.clip();
+      ctx.fillStyle = '#070822';
+      ctx.fillRect(Math.min(ex, bex), ceil, Math.abs(bex - ex), TUNNEL_CEIL);
+      ctx.globalCompositeOperation = 'lighter';
+      for (let t = 0; t < TUNNEL_CEIL; t += PLAID) {
+        for (const [o, w, c] of PLAID_BANDS) {
+          const ya = ceil + t + o, yb = ya + w;
+          ctx.fillStyle = c;
+          poly([[ex, ya], [ex, yb], [bex, by(yb)], [bex, by(ya)]]);
+          ctx.fill();
+        }
+      }
+      const depthX = (z) => vx + (ex - vx) * F / (F + z);
+      for (let t = 0; t < D; t += PLAID) {
+        for (const [o, w, c] of PLAID_BANDS) {
+          const xa = depthX(t + o), xb = depthX(t + o + w);
+          ctx.fillStyle = c;
+          ctx.fillRect(Math.min(xa, xb), ceil, Math.abs(xb - xa), TUNNEL_CEIL);
+        }
+      }
+      ctx.restore();
+    }
+
+    // 안쪽 벽 테두리 + 터널 끝에서 쏟아지는 빛
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = 'rgba(255,170,60,0.8)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(wx, wy, ww, wh);
+    glow(vx, vy, TUNNEL_CEIL * 0.9, '255,170,70', 0.45);
+    glow(vx, vy, 34, '255,250,225', 0.95);
+    ctx.restore();
+
     // 바닥 네온 라인
-    ctx.fillStyle = 'rgba(244,114,182,0.6)';
+    ctx.fillStyle = 'rgba(255,150,40,0.8)';
     ctx.fillRect(x1, groundY - 3, x2 - x1, 3);
   }
 
@@ -1378,27 +1465,22 @@ const VERSION = '2026-10-23.13';
     const [x1, x2] = span;
     const top = groundY - TUNNEL_TOP, ceil = groundY - TUNNEL_CEIL;
     // 천장 레일 (바깥 튜브)
-    fillPlaid(x1, top, x2 - x1, TUNNEL_TOP - TUNNEL_CEIL);
+    fillPlaid(x1, top, x2 - x1, TUNNEL_TOP - TUNNEL_CEIL, tunnel.x, top, 1);
     const shell = ctx.createLinearGradient(0, top, 0, ceil);
-    shell.addColorStop(0, 'rgba(51,65,85,0.45)');
-    shell.addColorStop(1, 'rgba(2,6,23,0.7)');
+    shell.addColorStop(0, 'rgba(10,11,38,0.35)');
+    shell.addColorStop(1, 'rgba(5,6,26,0.7)');
     ctx.fillStyle = shell;
     ctx.fillRect(x1, top, x2 - x1, TUNNEL_TOP - TUNNEL_CEIL);
-    ctx.fillStyle = 'rgba(103,232,249,0.9)';
+    ctx.fillStyle = 'rgba(255,196,80,0.95)';
     ctx.fillRect(x1, ceil - 3, x2 - x1, 3);
-    // 천장 조명: 일정 간격의 밝은 점이 흘러감
-    for (let x = tunnel.x + 60; x < x2; x += 120) {
-      if (x < x1) continue;
-      glow(x, ceil + 4, 26, '103,232,249', 0.35);
-    }
     // 입구·출구 기둥 + 이름
     for (const [px, label] of [[tunnel.x, 'HYPERLOOP'], [tunnel.x + tunnel.len, 'EXIT']]) {
       if (px < -60 || px > W + 60) continue;
-      ctx.fillStyle = '#1e293b';
+      ctx.fillStyle = '#1a1033';
       ctx.fillRect(px - 14, top - 14, 28, TUNNEL_TOP + 14);
-      ctx.fillStyle = '#f472b6';
+      ctx.fillStyle = '#ef4444';
       ctx.fillRect(px - 14, top - 14, 28, 4);
-      ctx.fillStyle = 'rgba(103,232,249,0.8)';
+      ctx.fillStyle = 'rgba(255,170,60,0.9)';
       ctx.fillRect(px - 2, top - 10, 4, TUNNEL_TOP + 10);
       ctx.fillStyle = '#f8fafc';
       ctx.font = '800 16px system-ui, sans-serif';
