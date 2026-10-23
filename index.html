@@ -1323,39 +1323,54 @@ const VERSION = '2026-10-23.15';
   // 화면 픽셀 크기에 맞춘 타일을 배율별로 한 번만 만들어 둠 (화면 크기가 바뀌면 비움)
   let plaidCache = {};
 
-  function plaid(scale) {
+  // wall=true: 터널 안쪽 벽 전용 타일 (높이 = 터널 내부 전체). 가로 빛줄 번짐과 아래쪽 어둡게 처리를
+  // 타일에 미리 넣어 두어 매 프레임 화면 전체를 덧칠하지 않게 함
+  function plaid(scale, wall) {
     const px = Math.max(8, Math.round(PLAID * scale * viewScale * dpr));
-    if (plaidCache[px]) return plaidCache[px];
+    const key = wall ? `w${px}` : px;
+    if (plaidCache[key]) return plaidCache[key];
+    const h = wall ? TUNNEL_CEIL : PLAID;
     const cv = document.createElement('canvas');
-    cv.width = cv.height = px;
+    cv.width = px;
+    cv.height = Math.round(h * px / PLAID);
     const g = cv.getContext('2d');
     g.scale(px / PLAID, px / PLAID);
     g.fillStyle = '#070822';
-    g.fillRect(0, 0, PLAID, PLAID);
+    g.fillRect(0, 0, PLAID, h);
     g.globalCompositeOperation = 'lighter'; // 줄이 겹치는 곳이 더 밝게 빛남
     for (const [p, w, c] of PLAID_BANDS) {
       g.fillStyle = c;
-      g.fillRect(0, p, PLAID, w);
-      g.fillRect(p, 0, w, PLAID);
+      for (let t = 0; t < h; t += PLAID) g.fillRect(0, t + p, PLAID, w);
+      g.fillRect(p, 0, w, h);
     }
     // 어두운 칸 사이의 파란 점선 조명
     g.fillStyle = 'rgba(96,130,255,0.7)';
-    for (let i = 0; i < PLAID; i += 8) {
-      g.fillRect(i, 108, 3, 2);
-      g.fillRect(108, i, 2, 3);
+    for (let t = 0; t < h; t += PLAID) for (let i = 0; i < PLAID; i += 8) g.fillRect(i, t + 108, 3, 2);
+    for (let i = 0; i < h; i += 8) g.fillRect(108, i, 2, 3);
+    if (wall) {
+      // 길이 방향 금색 줄의 번짐
+      g.fillStyle = 'rgba(255,170,60,0.16)';
+      for (let y = LANE_Y; y < h; y += PLAID) g.fillRect(0, y - 6, PLAID, 12);
+      // 아래쪽은 차량이 잘 보이도록 조금 어둡게
+      g.globalCompositeOperation = 'source-over';
+      const shade = g.createLinearGradient(0, 0, 0, h);
+      shade.addColorStop(0.4, 'rgba(2,6,23,0)');
+      shade.addColorStop(1, 'rgba(2,6,23,0.4)');
+      g.fillStyle = shade;
+      g.fillRect(0, 0, PLAID, h);
     }
-    plaidCache[px] = ctx.createPattern(cv, 'repeat');
-    return plaidCache[px];
+    plaidCache[key] = ctx.createPattern(cv, wall ? 'repeat-x' : 'repeat');
+    return plaidCache[key];
   }
 
   // (ox, oy) 를 무늬 원점으로, scale 배율로 채움 → 터널과 함께 흘러감
   // 화면 픽셀 좌표(정수 위치)에서 그려 패턴이 다시 샘플링되지 않게 함
-  function fillPlaid(x, y, w, h, ox, oy, scale) {
+  function fillPlaid(x, y, w, h, ox, oy, scale, wall) {
     const f = viewScale * dpr;
     const dx = Math.round(ox * f), dy = Math.round(oy * f);
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, dx, dy);
-    ctx.fillStyle = plaid(scale);
+    ctx.fillStyle = plaid(scale, wall);
     ctx.fillRect(x * f - dx, y * f - dy, w * f, h * f);
     ctx.restore();
   }
@@ -1363,6 +1378,7 @@ const VERSION = '2026-10-23.15';
   // 옆에서 본 플레드 터널: 정면에서 소실점으로 모이던 길이 방향 줄은 가로줄로, 사각 틀(링)은 세로 기둥으로 보임.
   // 가로줄을 따라 빛이 진행 방향으로 흐르고, 출구 쪽에서 빛이 쏟아져 들어옴
   const RING = 360;   // 링(사각 틀) 간격
+  const LANE_Y = 77.5; // 타일 안 금색 가로줄 위치 (빛이 흐르는 줄)
   const PULSES = 6;   // 가로줄을 따라 흐르는 빛 개수
 
   function drawTunnelBack() {
@@ -1375,21 +1391,10 @@ const VERSION = '2026-10-23.15';
     ctx.rect(x1, ceil, w, TUNNEL_CEIL);
     ctx.clip();
     // 안쪽 벽 체크 무늬 (터널과 함께 흘러감)
-    fillPlaid(x1, ceil, w, TUNNEL_CEIL, tunnel.x, ceil, 1);
+    fillPlaid(x1, ceil, w, TUNNEL_CEIL, tunnel.x, ceil, 1, true);
     ctx.globalCompositeOperation = 'lighter';
-    // 출구(진행 방향) 쪽이 밝아지는 빛
-    const ahead = ctx.createLinearGradient(x1, 0, x2, 0);
-    ahead.addColorStop(0, 'rgba(255,140,40,0)');
-    ahead.addColorStop(1, 'rgba(255,140,40,0.14)');
-    ctx.fillStyle = ahead;
-    ctx.fillRect(x1, ceil, w, TUNNEL_CEIL);
-    // 길이 방향 금색 줄의 번짐
     const lanes = [];
-    for (let y = ceil + 77.5; y < groundY; y += PLAID) {
-      lanes.push(y);
-      ctx.fillStyle = 'rgba(255,170,60,0.16)';
-      ctx.fillRect(x1, y - 6, w, 12);
-    }
+    for (let y = ceil + LANE_Y; y < groundY; y += PLAID) lanes.push(y);
     // 링: 은은한 번짐 + 밝은 심
     for (let x = tunnel.x + RING / 2; x < x2 + 20; x += RING) {
       if (x < x1 - 20) continue;
@@ -1416,13 +1421,6 @@ const VERSION = '2026-10-23.15';
       glow(exit, ceil + TUNNEL_CEIL / 2, 260, '255,170,70', 0.5);
       glow(exit, ceil + TUNNEL_CEIL / 2, 70, '255,250,225', 0.9);
     }
-    // 아래쪽은 차량이 잘 보이도록 조금 어둡게
-    ctx.globalCompositeOperation = 'source-over';
-    const shade = ctx.createLinearGradient(0, ceil, 0, groundY);
-    shade.addColorStop(0.4, 'rgba(2,6,23,0)');
-    shade.addColorStop(1, 'rgba(2,6,23,0.4)');
-    ctx.fillStyle = shade;
-    ctx.fillRect(x1, ceil, w, TUNNEL_CEIL);
     ctx.restore();
 
     // 바닥 네온 라인
