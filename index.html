@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.19';
+const VERSION = '2026-10-23.20';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1313,10 +1313,11 @@ const VERSION = '2026-10-23.19';
   // 플레드 터널: 테슬라 Model S Plaid 발표 영상처럼 검정 바탕에
   // 세로줄은 흰색 → 검정 → 빨강 → 흰색 순서로 반복, 가로줄은 얇은 흰 선 4개
   const PLAID = 200; // 세로줄 반복 폭
-  const V_STRIPES = [ // [시작 위치, 폭, 색] — 사이 빈 곳은 검정 바탕
-    [0, 12, 'rgba(255,255,255,0.92)'],
-    [100, 28, 'rgba(225,18,40,0.8)'],
-    [128, 12, 'rgba(255,255,255,0.92)'],
+  const STRIPE_W = 12; // 세로줄 두께 (모두 동일)
+  const V_STRIPES = [ // [시작 위치, 색] — 사이 빈 곳은 검정 바탕
+    [0, 'rgba(255,255,255,0.92)'],
+    [116, 'rgba(225,18,40,0.8)'],
+    [128, 'rgba(255,255,255,0.92)'],
   ];
   // 가로 흰 선 4개: 바닥에서 터널 높이의 1/3 지점에 7px 간격으로 모아 배치 (값은 천장에서부터의 위치)
   const H_LINES = [-10.5, -3.5, 3.5, 10.5].map((d) => TUNNEL_CEIL * 2 / 3 + d);
@@ -1339,9 +1340,9 @@ const VERSION = '2026-10-23.19';
     g.fillStyle = '#060608';
     g.fillRect(0, 0, PLAID, h);
     g.globalCompositeOperation = 'lighter'; // 줄이 겹치는 곳이 더 밝게 빛남
-    for (const [p, w, c] of V_STRIPES) {
+    for (const [p, c] of V_STRIPES) {
       g.fillStyle = c;
-      g.fillRect(p, 0, w, h);
+      g.fillRect(p, 0, STRIPE_W, h);
     }
     if (wall) {
       // 얇은 가로 흰 선 + 은은한 번짐
