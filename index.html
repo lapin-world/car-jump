@@ -382,7 +382,7 @@ const VERSION = '2026-10-23.8';
         o.passed = true;
         carsPassed++;
         score += o.type.points;
-        if (o.rival) popup(`라이벌 통과! +${o.type.points}`, '#facc15');
+        if (o.rival) popup(`안전운전 +${o.type.points}점`, '#facc15');
         if (!player.onGround && !o.rival) {
           player.jumpClears++;
           if (o.minClear < NEAR_MISS) player.jumpNear++;
@@ -1060,7 +1060,7 @@ const VERSION = '2026-10-23.8';
 
   // ---------- 라이벌 차량 (우리 차와 같은 모델, 왼쪽을 향해 달려옴) ----------
   // 판정용 크기: 차체 길이 약 106, 바퀴 아래~지붕 약 36 (모델 단위) × CAR_SCALE
-  const RIVAL = { name: 'rival', w: Math.round(106 * CAR_SCALE), h: Math.round(36 * CAR_SCALE), hitTop: 0.25, points: 5 }; // 통과 시 보너스 5점
+  const RIVAL = { name: 'rival', w: Math.round(106 * CAR_SCALE), h: Math.round(36 * CAR_SCALE), hitTop: 0.25, points: 3 }; // 통과 시 '안전운전' 보너스 3점
 
   function updateRival(o, dt) {
     o.wheel += speed * dt / 14;
