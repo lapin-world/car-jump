@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.17';
+const VERSION = '2026-10-23.18';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1310,16 +1310,15 @@ const VERSION = '2026-10-23.17';
     return x2 > x1 ? [x1, x2] : null;
   }
 
-  // 플레드(타탄 체크) 터널: 테슬라 Model S Plaid 발표 영상처럼 검정 바탕에 흰 빛 막대·빨강 띠를 가로·세로로 겹침
-  // [시작 위치, 폭, 색] (타일 PLAID 단위 반복)
-  // 사진처럼 검정 바탕이 넓게 보이도록 타일을 크게 잡고 줄 수를 최소로 함
-  const PLAID = 240;
-  const PLAID_BANDS = [
-    [0, 26, 'rgba(225,18,40,0.75)'],    // 빨강 띠
-    [70, 10, 'rgba(255,255,255,0.92)'], // 흰 빛 막대 2줄
-    [88, 10, 'rgba(255,255,255,0.92)'],
-    [150, 18, 'rgba(225,18,40,0.6)'],   // 빨강 띠
+  // 플레드 터널: 테슬라 Model S Plaid 발표 영상처럼 검정 바탕에
+  // 세로줄은 흰색 → 검정 → 빨강 → 흰색 순서로 반복, 가로줄은 얇은 흰 선 4개
+  const PLAID = 200; // 세로줄 반복 폭
+  const V_STRIPES = [ // [시작 위치, 폭, 색] — 사이 빈 곳은 검정 바탕
+    [0, 12, 'rgba(255,255,255,0.92)'],
+    [100, 28, 'rgba(225,18,40,0.8)'],
+    [128, 12, 'rgba(255,255,255,0.92)'],
   ];
+  const H_LINES = [46, 92, 138, 184]; // 천장에서부터 가로 흰 선 위치(px)
   // 확대·축소한 패턴으로 채우면 매 프레임 다시 샘플링해 느리므로,
   // 화면 픽셀 크기에 맞춘 타일을 배율별로 한 번만 만들어 둠 (화면 크기가 바뀌면 비움)
   let plaidCache = {};
@@ -1339,15 +1338,18 @@ const VERSION = '2026-10-23.17';
     g.fillStyle = '#060608';
     g.fillRect(0, 0, PLAID, h);
     g.globalCompositeOperation = 'lighter'; // 줄이 겹치는 곳이 더 밝게 빛남
-    for (const [p, w, c] of PLAID_BANDS) {
+    for (const [p, w, c] of V_STRIPES) {
       g.fillStyle = c;
-      for (let t = 0; t < h; t += PLAID) g.fillRect(0, t + p, PLAID, w);
       g.fillRect(p, 0, w, h);
     }
     if (wall) {
-      // 길이 방향 흰 빛 막대의 번짐
-      g.fillStyle = 'rgba(255,255,255,0.1)';
-      for (let y = LANE_Y; y < h; y += PLAID) g.fillRect(0, y - 14, PLAID, 28);
+      // 얇은 가로 흰 선 + 은은한 번짐
+      for (const y of H_LINES) {
+        g.fillStyle = 'rgba(255,255,255,0.08)';
+        g.fillRect(0, y - 5, PLAID, 10);
+        g.fillStyle = 'rgba(255,255,255,0.85)';
+        g.fillRect(0, y - 1, PLAID, 2);
+      }
       // 차량이 묻히지 않게 전체를 살짝, 아래쪽은 더 어둡게
       g.globalCompositeOperation = 'source-over';
       const shade = g.createLinearGradient(0, 0, 0, h);
@@ -1375,7 +1377,6 @@ const VERSION = '2026-10-23.17';
 
   // 옆에서 본 플레드 터널: 정면에서 소실점으로 모이던 길이 방향 줄은 가로줄로, 사각 틀은 세로줄로 보임.
   // 가로줄을 따라 빛이 진행 방향으로 흐르고, 출구 쪽에서 빛이 쏟아져 들어오며, 광택 바닥에 터널이 비침
-  const LANE_Y = 84;  // 타일 안 흰 빛 막대 2줄의 가운데 (빛이 흐르는 줄)
   const PULSES = 3;   // 가로줄을 따라 흐르는 빛 개수
 
   function drawTunnelBack() {
@@ -1391,7 +1392,7 @@ const VERSION = '2026-10-23.17';
     fillPlaid(x1, ceil, w, TUNNEL_CEIL, tunnel.x, ceil, 1, true);
     ctx.globalCompositeOperation = 'lighter';
     const lanes = [];
-    for (let y = ceil + LANE_Y; y < groundY; y += PLAID) lanes.push(y);
+    for (const y of H_LINES) lanes.push(ceil + y);
     // 가로줄을 따라 진행 방향으로 흐르는 빛 (머리가 밝은 꼬리)
     for (let i = 0; i < PULSES; i++) {
       const y = lanes[i % lanes.length];
@@ -1413,8 +1414,8 @@ const VERSION = '2026-10-23.17';
     ctx.restore();
 
     drawTunnelReflection(x1, w);
-    // 바닥 라인
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    // 바닥 라인 (가로 흰 선 4개와 헷갈리지 않게 어둡게)
+    ctx.fillStyle = 'rgba(100,116,139,0.6)';
     ctx.fillRect(x1, groundY - 2, w, 2);
   }
 
@@ -1450,7 +1451,7 @@ const VERSION = '2026-10-23.17';
     shell.addColorStop(1, 'rgba(6,6,8,0.75)');
     ctx.fillStyle = shell;
     ctx.fillRect(x1, top, x2 - x1, TUNNEL_TOP - TUNNEL_CEIL);
-    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.fillStyle = 'rgba(100,116,139,0.8)'; // 천장 레일 (가로 흰 선과 구분되게 회색)
     ctx.fillRect(x1, ceil - 3, x2 - x1, 3);
     // 입구·출구 기둥 + 이름
     for (const [px, label] of [[tunnel.x, 'HYPERLOOP'], [tunnel.x + tunnel.len, 'EXIT']]) {
