@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.10';
+const VERSION = '2026-10-23.11';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -363,7 +363,9 @@ const VERSION = '2026-10-23.10';
         startGame();
       }
     }
-    player.wheel += speed * dt / 14;
+    // 바퀴는 항상 시계 방향으로 보이게: 스포크 5개(72° 간격)라 한 프레임에 36° 이상 돌면
+    // 눈에는 거꾸로 도는 것처럼 보이므로(마차 바퀴 효과) 프레임당 회전량을 0.45rad(약 26°)로 제한
+    player.wheel += Math.min(speed * dt / 14, 0.45);
     updateParticles(dt);
     for (const p of popups) { p.life -= dt; p.y -= 40 * dt; }
     popups = popups.filter((p) => p.life > 0);
