@@ -84,7 +84,7 @@
 <div id="rank-side" hidden></div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.4';
+const VERSION = '2026-10-23.7';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -103,13 +103,14 @@ const VERSION = '2026-10-23.4';
   const HOLD_MAX = 0.35;
   const NEAR_MISS = 16;     // 차량 위를 이 높이(px) 이내로 스치면 '아슬아슬'
   const MAX_COMBO_BONUS = 3;
-  // 라이벌 차량: 차량을 ROLL_AFTER대 넘긴 뒤부터 가끔(ROLL_CHANCE) 우리 차와 같은 모델(테슬라 레드 랩핑)이
+  // 라이벌 차량: 차량을 ROLL_AFTER대 넘긴 뒤부터 가끔(ROLL_CHANCE) 우리 차와 같은 모델(노랑 단색 랩핑)이
   // 배럴롤 점프로 우리 차를 뛰어넘어 뒤로 지나감. 가만히 있으면 머리 위로 지나가고, 그 순간 점프하면 공중 충돌.
   // 체공 시간은 속도와 상관없이 ROLL_TIME초로 고정해 우리 차처럼 느긋하게 돎
   const ROLL_AFTER = 50;
   const ROLL_CHANCE = 0.2;
   const ROLL_TIME = 1.1;  // 체공 시간(초) — 우리 차 탭 점프 0.9초, 길게 누르기 1.26초
-  const OVER_HOP = 200;   // 뛰어넘기 최고 높이 — 지면의 우리 차(약 64)는 통과, 탭 점프 정점(약 240)과는 충돌
+  // 뛰어넘기 최고 높이: 우리 차 위를 지날 때 라이벌 바닥이 약 317 이상 → 길게 누른 점프(정점 약 333)로도 위로 넘을 수 없고 충돌
+  const OVER_HOP = 380;
   const OVER_SPAN = 700;  // 뛰어넘는 동안 이동 거리 (정점이 우리 차 바로 위)
   const PLAYER_H = 64;    // 공중 충돌 판정용 우리 차 높이 (루프 표시등 포함)
 
@@ -133,8 +134,8 @@ const VERSION = '2026-10-23.4';
   // 세로 화면(좁은 폭)에서도 다가오는 차량이 충분히 보이도록
   // 게임 월드를 최소 VIEW_MIN_W 논리 폭으로 잡고 화면에 맞게 축소해서 그림
   const VIEW_MIN_W = 820;
-  // 가로로 낮은 화면(모바일 가로 모드)에서도 길게 누른 점프(최고 약 333px)가 화면 안에 들어오도록 최소 논리 높이도 보장
-  const VIEW_MIN_H = 600;
+  // 가로로 낮은 화면(모바일 가로 모드)에서도 길게 누른 점프(최고 약 333px)와 라이벌 뛰어넘기(최고 380px)가 화면 안에 들어오도록 최소 논리 높이도 보장
+  const VIEW_MIN_H = 660;
   let W = 0, H = 0, groundY = 0;  // 게임 월드(논리) 크기
   let SW = 0, SH = 0, viewScale = 1, dpr = 1; // 실제 화면 크기와 축소 배율
   let state = 'ready'; // ready | playing | over
@@ -741,8 +742,8 @@ const VERSION = '2026-10-23.4';
     return (u > -24 && u < -16) || (u > -10 && u < -2) ? YELLOW : BODY;
   }
   const TAXI = { color: wrapColor, taxi: true };
-  // 라이벌: 같은 차체에 테슬라 레드 단색 랩핑 (택시 스트라이프·도어 데칼·루프 표시등 없음)
-  const TESLA_RED = { color: () => '#b91c1c', taxi: false };
+  // 라이벌: 같은 차체에 노랑 단색 랩핑 (택시 스트라이프·도어 데칼·루프 표시등 없음)
+  const RIVAL_YELLOW = { color: () => '#facc15', taxi: false };
 
   function topAt(x) {
     for (let i = 1; i < PROFILE.length; i++) {
@@ -832,7 +833,7 @@ const VERSION = '2026-10-23.4';
   }
 
   const MESH = buildMesh(TAXI);
-  const RIVAL_MESH = buildMesh(TESLA_RED);
+  const RIVAL_MESH = buildMesh(RIVAL_YELLOW);
   const WHEELS = [];
   for (const x of [-32, 33]) for (const side of [1, -1]) WHEELS.push({ x, z: (HALF_WIDTH + 0.6) * side });
 
