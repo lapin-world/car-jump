@@ -1501,6 +1501,11 @@ const VERSION = '2026-10-23.14';
     ctx.font = 'bold 18px system-ui, sans-serif';
     for (const p of popups) {
       ctx.globalAlpha = Math.min(1, p.life / 0.4);
+      // 밝은 피버 터널 위에서도 읽히도록 어두운 외곽선
+      ctx.strokeStyle = 'rgba(2,6,23,0.85)';
+      ctx.lineWidth = 4;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(p.text, p.x, p.y);
       ctx.fillStyle = p.color;
       ctx.fillText(p.text, p.x, p.y);
     }
