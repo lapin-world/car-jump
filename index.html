@@ -62,6 +62,13 @@
   /* 낮은 가로 화면: 2단 배치. 왼쪽(#rank-side)에 이름 입력, 오른쪽 패널에 랭킹을 촘촘하게 */
   #rank-side { position: fixed; transform: translateX(-50%); width: min(300px, 42vw); }
   #rank-side[hidden] { display: none; }
+  /* 일시정지 버튼: 게임 중에만 왼쪽 위에 표시 */
+  #pause-btn {
+    position: fixed; left: max(12px, env(safe-area-inset-left)); top: max(12px, env(safe-area-inset-top));
+    width: 40px; height: 40px; border-radius: 50%; border: 1px solid rgba(148,163,184,0.4);
+    background: rgba(15,23,42,0.6); color: #f8fafc; font: 600 16px system-ui, sans-serif; padding: 0;
+  }
+  #pause-btn[hidden] { display: none; }
   #rank.split { left: auto; right: 16px; transform: none; width: min(320px, 46vw); padding: 8px 12px; }
   #rank.split .msg { margin: 0 0 4px; font-size: 12px; }
   #rank.split li { padding: 2px 8px; font-size: 13px; }
@@ -82,9 +89,10 @@
   <ol id="rank-list"></ol>
 </div>
 <div id="rank-side" hidden></div>
+<button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.9';
+const VERSION = '2026-10-23.10';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -198,6 +206,7 @@ const VERSION = '2026-10-23.9';
   let restartHold = null; // 길게 누르기 시작 시각 (clock 기준)
 
   function handleInput() {
+    if (paused) return setPaused(false); // 일시정지 중 입력은 재개만 (점프로 이어지지 않음)
     if (state === 'playing') return jump();
     if (state === 'over') {
       restartHold = clock;
@@ -211,8 +220,30 @@ const VERSION = '2026-10-23.9';
     hideRanking();
     reset();
     state = 'playing';
+    pauseBtn.hidden = false;
     jump();
   }
+
+  // ---------- 일시정지 ----------
+  // 게임 중 버튼 / Esc·P 키로 멈춤, 화면 탭·Enter·Space·버튼으로 재개. 앱 전환·탭 숨김 시 자동 일시정지
+  const pauseBtn = document.getElementById('pause-btn');
+  let paused = false;
+
+  function setPaused(on) {
+    if (on && state !== 'playing') return;
+    paused = on;
+    holding = false;
+    pauseBtn.textContent = on ? '▶' : '❚❚';
+    pauseBtn.setAttribute('aria-label', on ? '계속하기' : '일시정지');
+  }
+
+  pauseBtn.addEventListener('pointerdown', (e) => e.stopPropagation()); // 버튼 탭이 점프로 전달되지 않게
+  pauseBtn.addEventListener('click', (e) => { e.stopPropagation(); setPaused(!paused); pauseBtn.blur(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') setPaused(!paused);
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) setPaused(true); });
 
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return; // 랭킹 이름 입력 중에는 점프/재시작 안 함
@@ -228,7 +259,7 @@ const VERSION = '2026-10-23.9';
   canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); holding = true; handleInput(); });
   window.addEventListener('pointerup', () => { holding = false; });
   window.addEventListener('pointercancel', () => { holding = false; });
-  window.addEventListener('blur', () => { holding = false; });
+  window.addEventListener('blur', () => { holding = false; setPaused(true); });
 
   const isTouch = window.matchMedia('(pointer: coarse)').matches; // 조작 안내 문구용 (탭 / 키보드)
 
@@ -437,6 +468,7 @@ const VERSION = '2026-10-23.9';
 
   function gameOver() {
     state = 'over';
+    pauseBtn.hidden = true;
     restartHold = null; // 충돌 순간 누르고 있던 입력은 다시 시작으로 이어지지 않게
     sparks(player.x + 30, groundY - player.y, 30, '#ef4444');
     smoke(player.x + 30, groundY - player.y, 14, 60);
@@ -1241,6 +1273,19 @@ const VERSION = '2026-10-23.9';
       ctx.font = '14px system-ui, sans-serif';
       ctx.fillText(`BEST ${best} · ROLLS ${flips || 0}`, W - 16, 54);
     }
+    if (paused) {
+      // 일시정지 화면: 반투명 어둡게 + 안내
+      ctx.fillStyle = 'rgba(2,6,23,0.55)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#f8fafc';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 32px system-ui, sans-serif';
+      ctx.fillText('일시정지', W / 2, H * 0.4);
+      ctx.font = '16px system-ui, sans-serif';
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText(isTouch ? '화면을 탭해서 계속' : 'Enter / Space / Esc로 계속', W / 2, H * 0.4 + 34);
+      return;
+    }
     if (state === 'playing' && combo > 1) {
       ctx.fillStyle = '#38bdf8';
       ctx.fillText(`COMBO x${combo}`, W - 16, 74);
@@ -1334,7 +1379,7 @@ const VERSION = '2026-10-23.9';
   function loop(now) {
     const dt = Math.min(0.033, (now - last) / 1000);
     last = now;
-    update(dt);
+    if (!paused) update(dt);
     draw();
     requestAnimationFrame(loop);
   }
