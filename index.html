@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.23';
+const VERSION = '2026-10-23.24';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1192,6 +1192,51 @@ const VERSION = '2026-10-23.23';
     ctx.restore();
   }
 
+  // 천장 매달리기 특수효과 (그립이 줄면 빨갛게 깜빡여 경고)
+  // back: 차 뒤 — 뒤로 흐르는 속도선 + 차체 아래 네온 언더글로우
+  // front: 차 앞 — 바퀴와 천장 사이 자석 빛·전기 아크 + 연타 순간 퍼지는 빛
+  function drawCeilingFx(x, grip, front) {
+    const ceil = groundY - TUNNEL_CEIL;
+    const warn = grip < 0.4;
+    const rgb = warn ? '248,113,113' : '125,211,252';
+    const flick = warn ? 0.55 + 0.45 * Math.sin(clock * 40) : 1;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    if (!front) {
+      for (let i = 0; i < 5; i++) {
+        const y = ceil + 12 + i * 11;
+        const len = 110 + ((clock * 700 + i * 53) % 90);
+        const end = x - 70 * CAR_SCALE + i * 6;
+        const tail = ctx.createLinearGradient(end - len, 0, end, 0);
+        tail.addColorStop(0, `rgba(${rgb},0)`);
+        tail.addColorStop(1, `rgba(${rgb},0.6)`);
+        ctx.fillStyle = tail;
+        ctx.fillRect(end - len, y, len, 2);
+      }
+      ctx.save();
+      ctx.translate(x, groundY - CEIL_Y + 4);
+      ctx.scale(1, 0.25);
+      glow(0, 0, 60 * CAR_SCALE, warn ? '248,113,113' : '244,114,182', 0.35 * flick);
+      ctx.restore();
+    } else {
+      const tap = Math.max(0, 1 - (clock - player.lastTap) / 0.15);
+      ctx.strokeStyle = `rgba(${rgb},${0.9 * flick})`;
+      ctx.lineWidth = 1.5;
+      for (const wx of [-32, 33]) {
+        const px = x + wx * CAR_SCALE;
+        glow(px, ceil + 2, 28 + 18 * tap, rgb, (0.35 + 0.4 * grip) * flick);
+        for (let k = 0; k < 2; k++) {
+          ctx.beginPath();
+          ctx.moveTo(px + (Math.random() - 0.5) * 30, ceil);
+          for (let seg = 1; seg <= 4; seg++) ctx.lineTo(px + (Math.random() - 0.5) * 26, ceil + seg * 6);
+          ctx.stroke();
+        }
+      }
+      if (tap > 0) glow(x, ceil + 20, 90 * tap + 20, '255,255,255', 0.3 * tap);
+    }
+    ctx.restore();
+  }
+
   function drawRoadster() {
     const { x, y, roll, wheel: rot } = player;
     const cy = groundY - y - AXIS_Y * CAR_SCALE;
@@ -1205,14 +1250,18 @@ const VERSION = '2026-10-23.23';
 
     if (player.mode) {
       // 피버: 뒤집힌 채 매달리기·배럴롤 착지 (바퀴 회전을 위해 실시간 렌더)
-      const jets = player.mode === 'toCeiling' || player.mode === 'exitRoll';
+      const hanging = player.mode === 'ceiling';
+      const grip = Math.max(0, 1 - (clock - player.lastTap) / GRIP_TIME);
+      if (hanging) drawCeilingFx(x, grip, false);
+      const jets = hanging ? 0.55 + 0.25 * Math.random() : player.mode === 'toCeiling' || player.mode === 'exitRoll' ? 1 : 0;
       ctx.save();
       ctx.translate(x, cy);
       ctx.scale(CAR_SCALE, CAR_SCALE);
-      if (jets) drawThrusters(roll, 1, false);
+      if (jets) drawThrusters(roll, jets, false);
       renderRoadster(ctx, roll, rot);
-      if (jets) drawThrusters(roll, 1, true);
+      if (jets) drawThrusters(roll, jets, true);
       ctx.restore();
+      if (hanging) drawCeilingFx(x, grip, true);
       return;
     }
 
