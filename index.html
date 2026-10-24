@@ -138,7 +138,8 @@ const VERSION = '2026-10-24.29';
   const LEVEL_SCORE = 500;
   const LEVEL_STEP = 150;
   const MAX_LEVEL = 5;
-  const BURST_SHORT = 0.25; // 러시 중 단일 차량 간격을 최소 간격보다 이만큼 줄임 (탭 점프 여유 약 0.3초 남음)
+  const BURST_GAP = 0.1;    // 러시 중 차량 간격 = 최소 간격 + 이 값 (랜덤 없이 일정한 박자). 봇 테스트상 0.05까지는 정확히 맞추면 모두 넘을 수 있음
+  const SPREAD_CUT = 0.12;  // 단계마다 간격 랜덤 폭을 이 비율씩 줄임
   const BURST_REST = 1.0;   // 러시가 끝난 뒤 쉬는 시간 (박자 깨기)
   const BURST_PAIR = 0.35;  // 러시 중 2대 연속(길게 누르기) 섞일 확률 — 탭·길게 누르기 번갈아 요구
 
@@ -375,10 +376,10 @@ const VERSION = '2026-10-24.29';
       burst--;
       const extra = spawnObstacle(true);
       if (!burst) return minGap + extra + BURST_REST + Math.random() * 0.5;
-      return extra ? minGap + extra : minGap - BURST_SHORT;
+      return minGap + extra + BURST_GAP;
     }
     const extra = spawnObstacle();
-    return minGap + extra + Math.random() * 1.1 * (1 - 0.12 * level);
+    return minGap + extra + Math.random() * 1.1 * (1 - SPREAD_CUT * level);
   }
 
   function popup(text, color) {
