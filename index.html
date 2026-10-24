@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-24.32';
+const VERSION = '2026-10-24.35';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -135,15 +135,22 @@ const VERSION = '2026-10-24.32';
   const FEVER_BONUS = 10;   // 터널 통과 보너스
   // 난이도 단계: LEVEL_SCORE점부터 LEVEL_STEP점마다 1단계씩 (최대 MAX_LEVEL)
   // 단계가 오를수록 연속 차량·라이벌 확률이 늘고 간격 랜덤 폭이 줄며, 박자를 깨는 러시 패턴이 자주 나옴
-  const LEVEL_SCORE = 500;
+  const LEVEL_SCORE = 300;
   const LEVEL_STEP = 150;
   const MAX_LEVEL = 5;
+  const LEVEL_OFFSET = 2;   // 단계별 난이도 = 단계 + 이 값 (LV1부터 바로 어렵게: LV1 = 예전 LV3 수준)
+  const BURST_MAX = 6;      // 러시 최대 차량 수 (점프당 타이밍 허용 폭 0.1초 유지)
   // 러시 중 차량 간격 = 최소 간격 + 이 값 (랜덤 없이 일정한 박자). 점프마다 타이밍 오차를 이 폭 안에서만 허용:
-  // 최악 패턴 기준 LV1·2 약 0.13초, LV3·4 약 0.11초, LV5(러시 최대 6대) 0.1초
+  // 최악 패턴 기준 러시 4대 약 0.13초, 5대 약 0.11초, 6대(BURST_MAX) 0.1초
   const BURST_GAP = 0.035;
+  // 일반 구간 최소 간격 = 최소 간격 + 이 값 = 탭 체공 시간(약 0.99초) + 0.1초 → 몇 대가 이어져도 점프당 허용 폭 0.1초 유지
+  const CHAIN_GAP = 0.105;
   const SPREAD_CUT = 0.12;  // 단계마다 간격 랜덤 폭을 이 비율씩 줄임
   const BURST_REST = 1.0;   // 러시가 끝난 뒤 쉬는 시간 (박자 깨기)
   const BURST_PAIR = 0.35;  // 러시 중 2대 연속(길게 누르기) 섞일 확률 — 탭·길게 누르기 번갈아 요구
+  // 러시 중 라이벌이 함께 나올 확률. 차량 수는 그대로 두고, 다음 차량을 넘는 순간 라이벌이 머리 위를 지나가게 배치
+  // → 짧게 탭(약 0.14초 이하)하면 라이벌 아래로 넘고, 길게 누르면 라이벌과 공중 충돌
+  const BURST_RIVAL = 0.25;
 
   // 장애물 차량: 테슬라 차종 이미지 (모두 왼쪽을 향하도록 배경 제거·반전한 PNG)
   // w: 화면 표시 폭(px), hitTop: 이미지 위쪽에서 판정 제외 비율, points: 넘었을 때 점수
@@ -186,13 +193,14 @@ const VERSION = '2026-10-24.32';
   let W = 0, H = 0, groundY = 0;  // 게임 월드(논리) 크기
   let SW = 0, SH = 0, viewScale = 1, dpr = 1; // 실제 화면 크기와 축소 배율
   let state = 'ready'; // ready | playing | over
-  let speed, distance, score, best, obstacles, spawnTimer, particles, flips, popups, combo, carsPassed, level, burst;
+  let speed, distance, score, best, obstacles, spawnTimer, particles, flips, popups, combo, carsPassed, level, burst, burstRival;
   let holding = false; // 점프 버튼을 누르고 있는지
   let clock = 0;       // 배경 애니메이션용 경과 시간
   let player;
   let tunnel = null;   // 하이퍼루프 터널 { x: 입구 위치, len: 길이 }
   let moonCycle = 0;   // 지금까지 지난 달 주기 수 (피버타임 등장 판정)
   let cleared = false; // 만점(MAX_SCORE) 달성으로 끝났는지
+  let feverEndAt = -Infinity; // 터널 구간 차량 생성이 끝난 시각
 
   try { best = Number(localStorage.getItem('roadster-best')) || 0; } catch { best = 0; }
 
@@ -221,6 +229,8 @@ const VERSION = '2026-10-24.32';
     carsPassed = 0;
     level = 0;
     burst = 0; // 남은 러시 차량 수
+    burstRival = false;
+    feverEndAt = -Infinity;
     popups = [];
     obstacles = [];
     particles = [];
@@ -364,15 +374,15 @@ const VERSION = '2026-10-24.32';
 
   // 장애물 패턴: 단일 차량 / 2~3대 연속(길게 누르기)
   // 연속 차량은 길게 누른 점프로 넘을 수 있는 속도 구간에서만 등장. 반환값은 다음 생성까지 추가 대기 시간
-  function spawnObstacle(inBurst) {
+  function spawnObstacle(inBurst, single) {
     const x0 = W + 40;
     const r = Math.random();
     let count = 1;
     if (inBurst) {
-      if (speed >= 450 && r < BURST_PAIR) count = 2;
-    } else if (speed >= 650 && r < 0.15 + 0.04 * level) count = 3;
-    else if (speed >= 450 && r < 0.4 + 0.06 * level) count = 2;
-    if (!inBurst && count === 1 && carsPassed >= ROLL_AFTER && Math.random() < ROLL_CHANCE + 0.03 * level) {
+      if (!single && speed >= 450 && r < BURST_PAIR) count = 2;
+    } else if (speed >= 650 && r < 0.15 + 0.04 * diff()) count = 3;
+    else if (speed >= 450 && r < 0.4 + 0.06 * diff()) count = 2;
+    if (!inBurst && count === 1 && carsPassed >= ROLL_AFTER && Math.random() < ROLL_CHANCE + 0.03 * diff()) {
       // 앞 차량과 겹치지 않게 조금 더 뒤에서 등장
       const x = x0 + speed * 0.3;
       const o = addRival(x);
@@ -388,18 +398,33 @@ const VERSION = '2026-10-24.32';
     return count > 1 ? (x - 30 - x0) / speed + 0.45 : 0;
   }
 
+  // 난이도 값: 단계가 없으면 0, 있으면 단계 + LEVEL_OFFSET
+  function diff() {
+    return level ? level + LEVEL_OFFSET : 0;
+  }
+
   // 다음 생성까지 대기 시간. 단계가 있으면 가끔 러시(짧은 간격으로 몰아서 등장 → 긴 휴식) 패턴
   function nextSpawn() {
     const minGap = 0.85 + 120 / speed;
-    if (!burst && level && Math.random() < 0.1 + 0.05 * level) burst = 3 + Math.floor(Math.random() * (1 + level / 2));
+    const d = diff();
+    // 터널 출구 배럴롤 착지가 첫 점프를 늦추므로 터널 뒤 첫 차량은 러시로 시작하지 않음
+    if (!burst && d && clock - feverEndAt > 1 && Math.random() < 0.1 + 0.05 * d) burst = Math.min(BURST_MAX, 3 + Math.floor(Math.random() * (1 + d / 2)));
     if (burst) {
       burst--;
-      const extra = spawnObstacle(true);
+      const extra = spawnObstacle(true, burstRival);
+      burstRival = false;
       if (!burst) return minGap + extra + BURST_REST + Math.random() * 0.5;
-      return minGap + extra + BURST_GAP;
+      const gap = minGap + extra + BURST_GAP;
+      if (carsPassed >= ROLL_AFTER && Math.random() < BURST_RIVAL) {
+        // 다음 차량 바로 앞(20px)에서 함께 달려오도록 화면 밖에 배치 → 그 차를 넘는 동안 라이벌이 머리 위를 지나감
+        addRival(W + 40 + speed * gap - RIVAL.w - 20);
+        burstRival = true; // 라이벌 아래로 넘을 다음 차량은 탭으로 넘는 단일 차량만
+      }
+      return gap;
     }
     const extra = spawnObstacle();
-    return minGap + extra + Math.random() * 1.1 * (1 - SPREAD_CUT * level);
+    // 단계가 높으면 랜덤 폭이 작아 일반 차량이 끝없이 빠듯하게 이어질 수 있음 → CHAIN_GAP 으로 허용 폭이 쌓여 줄지 않게 함
+    return minGap + extra + (d ? CHAIN_GAP : 0) + Math.random() * 1.1 * (1 - SPREAD_CUT * d);
   }
 
   function popup(text, color) {
@@ -434,6 +459,9 @@ const VERSION = '2026-10-24.32';
     // 이미 화면에 나온 차량을 넘고 나서 진입하도록 화면 밖 멀리서 등장
     tunnel = { x: W + 40 + speed * 1.5, len: speed * TUNNEL_TIME };
     burst = 0;
+    burstRival = false;
+    // 화면 밖에서 대기 중인 러시 라이벌은 터널 입구에서 바닥에 남을 수 있어 제거
+    obstacles = obstacles.filter((o) => !(o.rival && o.t < 0 && o.x > W));
     popup('FEVER TIME!', '#f472b6');
   }
 
@@ -451,6 +479,8 @@ const VERSION = '2026-10-24.32';
       return 0.55 + Math.random() * 0.7;
     }
     if (x0 < end + speed * (EXIT_TIME + 0.6)) return 0.15;
+    tunnel = null;
+    feverEndAt = clock;
     return 0;
   }
 
@@ -564,10 +594,7 @@ const VERSION = '2026-10-24.32';
       level = lv;
       popup(`LEVEL ${level}!`, '#f87171');
     }
-    if (tunnel) {
-      tunnel.x -= speed * dt;
-      if (tunnel.x + tunnel.len < -100) tunnel = null;
-    }
+    if (tunnel) tunnel.x -= speed * dt; // 터널은 출구 뒤 비우는 구간까지 지난 뒤 feverSpawn 에서 정리
 
     speed = Math.min(MAX_SPEED, speed + SPEED_GAIN * dt);
     distance += speed * dt;
