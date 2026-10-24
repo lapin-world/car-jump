@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-24.29';
+const VERSION = '2026-10-24.30';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -176,6 +176,7 @@ const VERSION = '2026-10-24.29';
   let player;
   let tunnel = null;   // 하이퍼루프 터널 { x: 입구 위치, len: 길이 }
   let moonCycle = 0;   // 지금까지 지난 달 주기 수 (피버타임 등장 판정)
+  let cleared = false; // 만점(MAX_SCORE) 달성으로 끝났는지
 
   try { best = Number(localStorage.getItem('roadster-best')) || 0; } catch { best = 0; }
 
@@ -214,6 +215,7 @@ const VERSION = '2026-10-24.29';
       mode: null, modeT: 0, y0: 0, r0: 0, lastTap: 0, // 피버 모드: toCeiling | ceiling | falling | exitRoll
     };
     tunnel = null;
+    cleared = false;
     moonCycle = Math.floor(clock / MOON_CYCLE + 0.1);
   }
 
@@ -532,6 +534,9 @@ const VERSION = '2026-10-24.29';
     updateParticles(dt);
     for (const p of popups) { p.life -= dt; p.y -= 40 * dt; }
     popups = popups.filter((p) => p.life > 0);
+    if (cleared && Math.random() < dt * 4) {
+      sparks(W * (0.2 + Math.random() * 0.6), groundY * (0.15 + Math.random() * 0.4), 24, ['#fbbf24', '#f472b6', '#67e8f9', '#6ee7b7'][Math.floor(Math.random() * 4)]);
+    }
     // 달이 한 주기를 돌 때마다(삭) 피버타임 판정
     const cycle = Math.floor(clock / MOON_CYCLE + 0.1);
     const newMoon = cycle !== moonCycle;
@@ -631,6 +636,7 @@ const VERSION = '2026-10-24.29';
         }
       }
     }
+    if (state === 'playing' && score >= MAX_SCORE) gameClear();
   }
 
   function updateParticles(dt) {
@@ -661,6 +667,18 @@ const VERSION = '2026-10-24.29';
       best = score;
       try { localStorage.setItem('roadster-best', String(best)); } catch {}
     }
+    showRanking();
+  }
+
+  // 만점 달성: 점수를 만점으로 맞추고 게임 종료 + 축하 화면
+  function gameClear() {
+    score = MAX_SCORE;
+    cleared = true;
+    state = 'over';
+    pauseBtn.hidden = true;
+    restartHold = null;
+    best = score;
+    try { localStorage.setItem('roadster-best', String(best)); } catch {}
     showRanking();
   }
 
@@ -1739,17 +1757,30 @@ const VERSION = '2026-10-24.29';
         ctx.fillText(`SCORE ${score} · BEST ${best}`, x, y - 40);
         ctx.fillStyle = '#f8fafc';
       }
-      ctx.font = 'bold 32px system-ui, sans-serif';
-      ctx.fillText('CRASH!', x, y);
-      ctx.font = '16px system-ui, sans-serif';
-      ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, y + 32);
+      let ry = y + 32; // 다시 시작 안내 위치
+      if (cleared) {
+        ctx.font = 'bold 28px system-ui, sans-serif';
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillText(`축하합니다! ${MAX_SCORE}점 달성!`, x, y);
+        ctx.font = '16px system-ui, sans-serif';
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillText('끝까지 플레이해 주셔서 감사합니다', x, y + 28);
+        ctx.font = '14px system-ui, sans-serif';
+        ctx.fillStyle = '#cbd5e1';
+        ry = y + 60;
+      } else {
+        ctx.font = 'bold 32px system-ui, sans-serif';
+        ctx.fillText('CRASH!', x, y);
+        ctx.font = '16px system-ui, sans-serif';
+      }
+      ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, ry);
       // 길게 누르는 동안 진행 막대
       if (restartHold !== null) {
         const t = Math.min(1, (clock - restartHold) / RESTART_HOLD);
         ctx.fillStyle = 'rgba(148,163,184,0.3)';
-        ctx.fillRect(x - 80, y + 42, 160, 4);
+        ctx.fillRect(x - 80, ry + 10, 160, 4);
         ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(x - 80, y + 42, 160 * t, 4);
+        ctx.fillRect(x - 80, ry + 10, 160 * t, 4);
       }
     }
   }
@@ -1792,31 +1823,32 @@ const VERSION = '2026-10-24.29';
 
   function layoutOver(W, H) {
     const split = isSplit(W, H);
+    const extra = cleared ? 28 : 0; // 만점 축하 문구로 늘어난 높이
     let x = W / 2, y;
     let key;
     if (split) {
       x = Math.round(W * 0.27);
       y = Math.round(Math.max(72, H * 0.3));
-      key = `s${x},${y},${H},${rankEl.hidden}`;
+      key = `s${x},${y},${H},${rankEl.hidden},${extra}`;
       if (key !== overLayoutKey) {
         rankEl.classList.add('split');
         if (rankForm.parentNode !== rankSide) rankSide.append(rankForm);
         rankEl.style.top = '12px';
         rankEl.style.maxHeight = `${H - 24}px`;
         rankSide.style.left = `${x}px`;
-        rankSide.style.top = `${y + 58}px`;
+        rankSide.style.top = `${y + 58 + extra}px`;
         rankSide.hidden = rankEl.hidden;
       }
     } else {
       const panelH = rankEl.hidden ? 0 : rankEl.scrollHeight;
-      y = Math.round(Math.max(48, Math.min(H * 0.3, H - panelH - 70)));
-      key = `n${y},${H},${rankEl.hidden}`;
+      y = Math.round(Math.max(48, Math.min(H * 0.3, H - panelH - 70 - extra)));
+      key = `n${y},${H},${rankEl.hidden},${extra}`;
       if (key !== overLayoutKey) {
         rankEl.classList.remove('split');
         if (rankForm.parentNode !== rankEl) rankEl.prepend(rankForm);
         rankSide.hidden = true;
-        rankEl.style.top = `${y + 58}px`;
-        rankEl.style.maxHeight = `${Math.max(120, H - y - 70)}px`;
+        rankEl.style.top = `${y + 58 + extra}px`;
+        rankEl.style.maxHeight = `${Math.max(120, H - y - 70 - extra)}px`;
       }
     }
     overLayoutKey = key;
