@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-24.34';
+const VERSION = '2026-10-24.35';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -135,7 +135,7 @@ const VERSION = '2026-10-24.34';
   const FEVER_BONUS = 10;   // 터널 통과 보너스
   // 난이도 단계: LEVEL_SCORE점부터 LEVEL_STEP점마다 1단계씩 (최대 MAX_LEVEL)
   // 단계가 오를수록 연속 차량·라이벌 확률이 늘고 간격 랜덤 폭이 줄며, 박자를 깨는 러시 패턴이 자주 나옴
-  const LEVEL_SCORE = 500;
+  const LEVEL_SCORE = 300;
   const LEVEL_STEP = 150;
   const MAX_LEVEL = 5;
   const LEVEL_OFFSET = 2;   // 단계별 난이도 = 단계 + 이 값 (LV1부터 바로 어렵게: LV1 = 예전 LV3 수준)
