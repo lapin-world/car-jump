@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-24.30';
+const VERSION = '2026-10-24.31';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -114,7 +114,7 @@ const VERSION = '2026-10-24.30';
   // 라이벌 차량: 차량을 ROLL_AFTER대 넘긴 뒤부터 가끔(ROLL_CHANCE) 우리 차와 같은 모델(민트 단색 랩핑)이
   // 배럴롤 점프로 우리 차를 뛰어넘어 뒤로 지나감. 가만히 있으면 머리 위로 지나가고, 그 순간 점프하면 공중 충돌.
   // 체공 시간은 속도와 상관없이 ROLL_TIME초로 고정해 우리 차처럼 느긋하게 돎
-  const ROLL_AFTER = 50;
+  const ROLL_AFTER = 25;
   const ROLL_CHANCE = 0.2;
   const ROLL_TIME = 1.1;  // 체공 시간(초) — 우리 차 탭 점프 0.9초, 길게 누르기 1.26초
   // 뛰어넘기 최고 높이: 우리 차 위를 지날 때 라이벌 바닥이 약 317 이상 → 길게 누른 점프(정점 약 333)로도 위로 넘을 수 없고 충돌
@@ -124,7 +124,7 @@ const VERSION = '2026-10-24.30';
   // 하이퍼루프 피버타임: FEVER_SCORE점 이상이면 달이 한 주기를 돌 때마다(삭) 터널이 등장.
   // 터널 안에서 연타하면 천장에 거꾸로 매달려 달리고 그 아래로 차량이 지나감.
   // 연타가 GRIP_TIME초 넘게 끊기면 추락해 게임 오버, 터널을 빠져나가면 배럴롤로 자동 착지
-  const FEVER_SCORE = 200;
+  const FEVER_SCORE = 100;
   const TUNNEL_TIME = 7;    // 터널 길이 (등장 시 속도로 달리는 시간, 초)
   const TUNNEL_CEIL = 230;  // 천장 높이(px)
   const TUNNEL_TOP = 272;   // 튜브 바깥 높이(px)
