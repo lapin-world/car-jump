@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-23.27';
+const VERSION = '2026-10-24.29';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -133,6 +133,14 @@ const VERSION = '2026-10-23.27';
   const CLIMB_TIME = 0.35;  // 천장까지 뒤집으며 올라가는 시간
   const EXIT_TIME = 0.9;    // 출구 배럴롤 착지 시간
   const FEVER_BONUS = 10;   // 터널 통과 보너스
+  // 난이도 단계: LEVEL_SCORE점부터 LEVEL_STEP점마다 1단계씩 (최대 MAX_LEVEL)
+  // 단계가 오를수록 연속 차량·라이벌 확률이 늘고 간격 랜덤 폭이 줄며, 박자를 깨는 러시 패턴이 자주 나옴
+  const LEVEL_SCORE = 500;
+  const LEVEL_STEP = 150;
+  const MAX_LEVEL = 5;
+  const BURST_SHORT = 0.25; // 러시 중 단일 차량 간격을 최소 간격보다 이만큼 줄임 (탭 점프 여유 약 0.3초 남음)
+  const BURST_REST = 1.0;   // 러시가 끝난 뒤 쉬는 시간 (박자 깨기)
+  const BURST_PAIR = 0.35;  // 러시 중 2대 연속(길게 누르기) 섞일 확률 — 탭·길게 누르기 번갈아 요구
 
   // 장애물 차량: 테슬라 차종 이미지 (모두 왼쪽을 향하도록 배경 제거·반전한 PNG)
   // w: 화면 표시 폭(px), hitTop: 이미지 위쪽에서 판정 제외 비율, points: 넘었을 때 점수
@@ -159,7 +167,7 @@ const VERSION = '2026-10-23.27';
   let W = 0, H = 0, groundY = 0;  // 게임 월드(논리) 크기
   let SW = 0, SH = 0, viewScale = 1, dpr = 1; // 실제 화면 크기와 축소 배율
   let state = 'ready'; // ready | playing | over
-  let speed, distance, score, best, obstacles, spawnTimer, particles, flips, popups, combo, carsPassed;
+  let speed, distance, score, best, obstacles, spawnTimer, particles, flips, popups, combo, carsPassed, level, burst;
   let holding = false; // 점프 버튼을 누르고 있는지
   let clock = 0;       // 배경 애니메이션용 경과 시간
   let player;
@@ -191,6 +199,8 @@ const VERSION = '2026-10-23.27';
     flips = 0;
     combo = 0;
     carsPassed = 0;
+    level = 0;
+    burst = 0; // 남은 러시 차량 수
     popups = [];
     obstacles = [];
     particles = [];
@@ -333,13 +343,15 @@ const VERSION = '2026-10-23.27';
 
   // 장애물 패턴: 단일 차량 / 2~3대 연속(길게 누르기)
   // 연속 차량은 길게 누른 점프로 넘을 수 있는 속도 구간에서만 등장. 반환값은 다음 생성까지 추가 대기 시간
-  function spawnObstacle() {
+  function spawnObstacle(inBurst) {
     const x0 = W + 40;
     const r = Math.random();
     let count = 1;
-    if (speed >= 650 && r < 0.15) count = 3;
-    else if (speed >= 450 && r < 0.4) count = 2;
-    if (count === 1 && carsPassed >= ROLL_AFTER && Math.random() < ROLL_CHANCE) {
+    if (inBurst) {
+      if (speed >= 450 && r < BURST_PAIR) count = 2;
+    } else if (speed >= 650 && r < 0.15 + 0.04 * level) count = 3;
+    else if (speed >= 450 && r < 0.4 + 0.06 * level) count = 2;
+    if (!inBurst && count === 1 && carsPassed >= ROLL_AFTER && Math.random() < ROLL_CHANCE + 0.03 * level) {
       // 앞 차량과 겹치지 않게 조금 더 뒤에서 등장
       const x = x0 + speed * 0.3;
       const o = addRival(x);
@@ -353,6 +365,20 @@ const VERSION = '2026-10-23.27';
       x += type.w + 30;
     }
     return count > 1 ? (x - 30 - x0) / speed + 0.45 : 0;
+  }
+
+  // 다음 생성까지 대기 시간. 단계가 있으면 가끔 러시(짧은 간격으로 몰아서 등장 → 긴 휴식) 패턴
+  function nextSpawn() {
+    const minGap = 0.85 + 120 / speed;
+    if (!burst && level && Math.random() < 0.1 + 0.05 * level) burst = 3 + Math.floor(Math.random() * (1 + level / 2));
+    if (burst) {
+      burst--;
+      const extra = spawnObstacle(true);
+      if (!burst) return minGap + extra + BURST_REST + Math.random() * 0.5;
+      return extra ? minGap + extra : minGap - BURST_SHORT;
+    }
+    const extra = spawnObstacle();
+    return minGap + extra + Math.random() * 1.1 * (1 - 0.12 * level);
   }
 
   function popup(text, color) {
@@ -386,6 +412,7 @@ const VERSION = '2026-10-23.27';
   function startFever() {
     // 이미 화면에 나온 차량을 넘고 나서 진입하도록 화면 밖 멀리서 등장
     tunnel = { x: W + 40 + speed * 1.5, len: speed * TUNNEL_TIME };
+    burst = 0;
     popup('FEVER TIME!', '#f472b6');
   }
 
@@ -508,6 +535,11 @@ const VERSION = '2026-10-23.27';
     moonCycle = cycle;
     if (state !== 'playing') return;
     if (newMoon && score >= FEVER_SCORE && !tunnel) startFever();
+    const lv = score < LEVEL_SCORE ? 0 : Math.min(MAX_LEVEL, 1 + Math.floor((score - LEVEL_SCORE) / LEVEL_STEP));
+    if (lv > level) {
+      level = lv;
+      popup(`LEVEL ${level}!`, '#f87171');
+    }
     if (tunnel) {
       tunnel.x -= speed * dt;
       if (tunnel.x + tunnel.len < -100) tunnel = null;
@@ -549,12 +581,7 @@ const VERSION = '2026-10-23.27';
     spawnTimer -= dt;
     if (spawnTimer <= 0) {
       const wait = tunnel ? feverSpawn() : 0;
-      if (wait) spawnTimer = wait;
-      else {
-        const extra = spawnObstacle();
-        const minGap = 0.85 + 120 / speed;
-        spawnTimer = minGap + extra + Math.random() * 1.1;
-      }
+      spawnTimer = wait || nextSpawn();
     }
 
     for (const o of obstacles) {
@@ -1609,6 +1636,7 @@ const VERSION = '2026-10-23.27';
       ['길게 누르기', '더 높이, 더 멀리'],
       ['아슬아슬', '보너스 점수'],
       [isTouch ? '탭 연타' : '연타', `${FEVER_SCORE}점 이후 피버 터널 매달리기`],
+      ['LEVEL', `${LEVEL_SCORE}점부터 난이도 상승`],
     ];
     const ground = groundY * viewScale; // 화면 좌표 기준 도로 위치
     const rowH = 30, padX = 16, padY = 12, gap = 12;
@@ -1670,7 +1698,7 @@ const VERSION = '2026-10-23.27';
       ctx.textAlign = 'right';
       ctx.fillText(`SCORE ${score}`, W - 16, 32);
       ctx.font = '14px system-ui, sans-serif';
-      ctx.fillText(`BEST ${best} · ROLLS ${flips || 0}`, W - 16, 54);
+      ctx.fillText(`BEST ${best} · ROLLS ${flips || 0}${state === 'playing' && level ? ` · LV ${level}` : ''}`, W - 16, 54);
     }
     if (paused) {
       // 일시정지 화면: 반투명 어둡게 + 안내
