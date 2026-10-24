@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-24.31';
+const VERSION = '2026-10-24.32';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -155,9 +155,25 @@ const VERSION = '2026-10-24.31';
     { name: 'modelx',     src: 'assets/cars/modelx.png',     w: 150, hitTop: 0.35, points: 2 }, // 팔콘윙 도어
     { name: 'cybertruck', src: 'assets/cars/cybertruck.png', w: 165, hitTop: 0.1,  points: 2 },
   ];
+  // 이미지를 처음 그릴 때 디코딩하느라 프레임이 멈추지 않게, 로드 직후 캔버스에 미리 그려 둠.
+  // 야간 장면용으로 살짝 어둡게(밝기 78%) 하는 것도 여기서 한 번만 처리 (매 프레임 ctx.filter 는 느림)
+  function bakeCar(img) {
+    const cv = document.createElement('canvas');
+    cv.width = img.naturalWidth;
+    cv.height = img.naturalHeight;
+    const g = cv.getContext('2d');
+    g.drawImage(img, 0, 0);
+    g.globalCompositeOperation = 'source-atop';
+    g.fillStyle = 'rgba(0,0,0,0.22)';
+    g.fillRect(0, 0, cv.width, cv.height);
+    return cv;
+  }
   for (const t of OBSTACLE_TYPES) {
     t.img = new Image();
-    t.img.onload = () => { t.h = Math.round(t.w * t.img.naturalHeight / t.img.naturalWidth); };
+    t.img.onload = () => {
+      t.h = Math.round(t.w * t.img.naturalHeight / t.img.naturalWidth);
+      t.sprite = bakeCar(t.img);
+    };
     t.img.src = t.src;
     t.h = Math.round(t.w * 0.33); // 로드 전 임시 높이
   }
@@ -811,12 +827,25 @@ const VERSION = '2026-10-24.31';
     return xs;
   }
 
+  // 원형 빛 번짐 스프라이트 (색별로 한 번만 만들고 크기·투명도만 바꿔 그림)
+  const glowSprites = {};
+  function glowSprite(rgb) {
+    if (glowSprites[rgb]) return glowSprites[rgb];
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const g = cv.getContext('2d');
+    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, `rgba(${rgb},1)`);
+    grad.addColorStop(1, `rgba(${rgb},0)`);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+    return (glowSprites[rgb] = cv);
+  }
+
   function glow(x, y, r, rgb, a) {
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, `rgba(${rgb},${a})`);
-    g.addColorStop(1, `rgba(${rgb},0)`);
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    ctx.globalAlpha = a;
+    ctx.drawImage(glowSprite(rgb), x - r, y - r, r * 2, r * 2);
+    ctx.globalAlpha = 1;
   }
 
   // 달: 초승달 → 상현 → 보름달 → 하현 → 그믐달 순으로 천천히 변하고,
@@ -1182,21 +1211,27 @@ const VERSION = '2026-10-24.31';
     }
   }
 
-  // 회전 프레임 스프라이트 미리 생성
-  let rollSprites = [];
+  // 회전 프레임 스프라이트 미리 생성 (공중 배럴롤) + 지면 주행용 바퀴 회전 프레임
+  // 바퀴 스포크가 5개라 72°마다 같은 모양 → 한 주기를 GROUND_FRAMES장으로 나눠 둠 (6° 간격)
+  const GROUND_FRAMES = 12;
+  const SPOKE_PERIOD = Math.PI * 0.4;
+  let rollSprites = [], groundSprites = [];
   function buildSprites() {
     const dpr = window.devicePixelRatio || 1;
     const k = CAR_SCALE * dpr;
-    rollSprites = [];
-    for (let i = 0; i < ROLL_FRAMES; i++) {
+    const sprite = (roll, wheel) => {
       const cv = document.createElement('canvas');
       cv.width = SPRITE_W * k;
       cv.height = SPRITE_H * k;
       const g = cv.getContext('2d');
       g.setTransform(k, 0, 0, k, cv.width / 2, cv.height / 2);
-      renderRoadster(g, (i / ROLL_FRAMES) * Math.PI * 2, 0);
-      rollSprites.push(cv);
-    }
+      renderRoadster(g, roll, wheel);
+      return cv;
+    };
+    rollSprites = [];
+    for (let i = 0; i < ROLL_FRAMES; i++) rollSprites.push(sprite((i / ROLL_FRAMES) * Math.PI * 2, 0));
+    groundSprites = [];
+    for (let i = 0; i < GROUND_FRAMES; i++) groundSprites.push(sprite(0, (i / GROUND_FRAMES) * SPOKE_PERIOD));
   }
 
   // 차체 모서리의 추진 분사구: 영상처럼 X자로 뻗어 회전을 일으키는 파란 분사
@@ -1330,12 +1365,10 @@ const VERSION = '2026-10-24.31';
       ctx.fillRect(tail - 120, groundY - 4, 120, 8);
       glow(tail, groundY - 20 * CAR_SCALE, 22, '239,68,68', 0.5);
 
-      // 지면 주행: 바퀴 회전을 위해 실시간 렌더
-      ctx.save();
-      ctx.translate(x, cy);
-      ctx.scale(CAR_SCALE, CAR_SCALE);
-      renderRoadster(ctx, 0, rot);
-      ctx.restore();
+      // 지면 주행: 바퀴 회전 각도에 맞는 미리 그린 프레임
+      const phase = ((rot % SPOKE_PERIOD) + SPOKE_PERIOD) % SPOKE_PERIOD;
+      const frame = Math.round((phase / SPOKE_PERIOD) * GROUND_FRAMES) % GROUND_FRAMES;
+      ctx.drawImage(groundSprites[frame], x - (SPRITE_W / 2) * CAR_SCALE, cy - (SPRITE_H / 2) * CAR_SCALE, SPRITE_W * CAR_SCALE, SPRITE_H * CAR_SCALE);
       return;
     }
 
@@ -1606,12 +1639,7 @@ const VERSION = '2026-10-24.31';
     ctx.beginPath();
     ctx.ellipse(o.x + o.w / 2, groundY + 1, o.w * 0.48, 5, 0, 0, Math.PI * 2);
     ctx.fill();
-    if (o.type.img.complete && o.type.img.naturalWidth) {
-      // 야간 장면에 맞게 살짝 어둡게
-      ctx.filter = 'brightness(0.78)';
-      ctx.drawImage(o.type.img, o.x, top + 2, o.w, o.h);
-      ctx.filter = 'none';
-    }
+    if (o.type.sprite) ctx.drawImage(o.type.sprite, o.x, top + 2, o.w, o.h);
     glow(o.x + o.w * 0.03, top + o.h * 0.5, 16, '224,242,254', 0.55);
     glow(o.x + o.w * 0.97, top + o.h * 0.4, 10, '239,68,68', 0.45);
   }
@@ -1620,12 +1648,9 @@ const VERSION = '2026-10-24.31';
     for (const p of particles) {
       if (p.kind !== kind) continue;
       if (kind === 'smoke') {
-        const a = Math.max(0, p.life / p.maxLife) * 0.35;
-        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
-        g.addColorStop(0, `rgba(${p.color},${a})`);
-        g.addColorStop(1, `rgba(${p.color},0)`);
-        ctx.fillStyle = g;
-        ctx.fillRect(p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
+        ctx.globalAlpha = Math.max(0, p.life / p.maxLife) * 0.35;
+        ctx.drawImage(glowSprite(p.color), p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
+        ctx.globalAlpha = 1;
       } else {
         ctx.globalAlpha = Math.max(0, p.life * 1.5);
         ctx.fillStyle = p.color;
