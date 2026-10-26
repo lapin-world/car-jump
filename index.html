@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-26.37';
+const VERSION = '2026-10-26.39';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -135,7 +135,7 @@ const VERSION = '2026-10-26.37';
   const FEVER_BONUS = 10;   // 터널 통과 보너스
   // 난이도 단계: LEVEL_SCORE점부터 LEVEL_STEP점마다 1단계씩 (최대 MAX_LEVEL)
   // 단계가 오를수록 연속 차량·라이벌 확률이 늘고 간격 랜덤 폭이 줄며, 박자를 깨는 러시 패턴이 자주 나옴
-  const LEVEL_SCORE = 300;
+  const LEVEL_SCORE = 200;
   const LEVEL_STEP = 150;
   const MAX_LEVEL = 5;
   const LEVEL_OFFSET = 2;   // 단계별 난이도 = 단계 + 이 값 (LV1부터 바로 어렵게: LV1 = 예전 LV3 수준)
@@ -145,6 +145,7 @@ const VERSION = '2026-10-26.37';
   const BURST_GAP = 0.035;
   // 일반 구간 최소 간격 = 최소 간격 + 이 값 = 탭 체공 시간(약 0.99초) + 0.1초 → 몇 대가 이어져도 점프당 허용 폭 0.1초 유지
   const CHAIN_GAP = 0.105;
+  const GROUP_PAD = 0.35;   // 최고 속도에서 2~3대 묶음 뒤 추가 간격 (묶음 길이 무관)
   const SPREAD_CUT = 0.18;  // 난이도 값마다 간격 랜덤 폭을 이 비율씩 줄임 (LV1 약 0.5초 → LV3부터 약 0.1초)
   const SPREAD_MIN = 0.1;   // 랜덤 폭 최소 비율
   const BURST_REST = 1.0;   // 러시가 끝난 뒤 쉬는 시간 (박자 깨기)
@@ -392,7 +393,12 @@ const VERSION = '2026-10-26.37';
       addCar(type, x);
       x += type.w + 30;
     }
-    return count > 1 ? (x - 30 - x0) / speed + 0.45 : 0;
+    if (count === 1) return 0;
+    // 묶음도 한 번에 넘고 가장 늦은 점프 시점은 첫 차량이 정하므로, 최고 속도에서는 착지가 묶음 길이와 거의 무관.
+    // 길게 누르기 체공(약 1.25초)이 탭(약 0.99초)보다 긴 만큼만 여유를 둠 → 러시에서도 점프당 허용 폭 0.1초 유지
+    // 그보다 느리면 묶음이 지나가는 시간이 길어 묶음 길이만큼 착지 여유를 둠
+    if (speed >= MAX_SPEED) return GROUP_PAD;
+    return (x - 30 - x0) / speed + 0.45;
   }
 
   // 난이도 값: 단계가 없으면 0, 있으면 단계 + LEVEL_OFFSET
@@ -577,10 +583,7 @@ const VERSION = '2026-10-26.37';
     if (state !== 'playing') return;
     if (newMoon && score >= FEVER_SCORE && !tunnel) startFever();
     const lv = score < LEVEL_SCORE ? 0 : Math.min(MAX_LEVEL, 1 + Math.floor((score - LEVEL_SCORE) / LEVEL_STEP));
-    if (lv > level) {
-      level = lv;
-      popup(`LEVEL ${level}!`, '#f87171');
-    }
+    if (lv > level) level = lv; // 단계는 화면에 표시하지 않고 난이도에만 반영
     if (tunnel) {
       tunnel.x -= speed * dt;
       // 출구 뒤 비우는 구간(feverSpawn)과 출구 착지가 모두 끝나고 출구가 화면 밖으로 나가면 정리
@@ -1701,7 +1704,6 @@ const VERSION = '2026-10-26.37';
       ['길게 누르기', '더 높이, 더 멀리'],
       ['아슬아슬', '보너스 점수'],
       [isTouch ? '탭 연타' : '연타', `${FEVER_SCORE}점 이후 피버 터널 매달리기`],
-      ['LEVEL', `${LEVEL_SCORE}점부터 난이도 상승`],
     ];
     const ground = groundY * viewScale; // 화면 좌표 기준 도로 위치
     const rowH = 30, padX = 16, padY = 12, gap = 12;
@@ -1763,7 +1765,7 @@ const VERSION = '2026-10-26.37';
       ctx.textAlign = 'right';
       ctx.fillText(`SCORE ${score}`, W - 16, 32);
       ctx.font = '14px system-ui, sans-serif';
-      ctx.fillText(`BEST ${best} · ROLLS ${flips || 0}${state === 'playing' && level ? ` · LV ${level}` : ''}`, W - 16, 54);
+      ctx.fillText(`BEST ${best} · ROLLS ${flips || 0}`, W - 16, 54);
     }
     if (paused) {
       // 일시정지 화면: 반투명 어둡게 + 안내
