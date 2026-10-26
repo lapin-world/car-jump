@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-26.38';
+const VERSION = '2026-10-26.39';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -135,7 +135,7 @@ const VERSION = '2026-10-26.38';
   const FEVER_BONUS = 10;   // 터널 통과 보너스
   // 난이도 단계: LEVEL_SCORE점부터 LEVEL_STEP점마다 1단계씩 (최대 MAX_LEVEL)
   // 단계가 오를수록 연속 차량·라이벌 확률이 늘고 간격 랜덤 폭이 줄며, 박자를 깨는 러시 패턴이 자주 나옴
-  const LEVEL_SCORE = 300;
+  const LEVEL_SCORE = 200;
   const LEVEL_STEP = 150;
   const MAX_LEVEL = 5;
   const LEVEL_OFFSET = 2;   // 단계별 난이도 = 단계 + 이 값 (LV1부터 바로 어렵게: LV1 = 예전 LV3 수준)
@@ -583,10 +583,7 @@ const VERSION = '2026-10-26.38';
     if (state !== 'playing') return;
     if (newMoon && score >= FEVER_SCORE && !tunnel) startFever();
     const lv = score < LEVEL_SCORE ? 0 : Math.min(MAX_LEVEL, 1 + Math.floor((score - LEVEL_SCORE) / LEVEL_STEP));
-    if (lv > level) {
-      level = lv;
-      popup(`LEVEL ${level}!`, '#f87171');
-    }
+    if (lv > level) level = lv; // 단계는 화면에 표시하지 않고 난이도에만 반영
     if (tunnel) {
       tunnel.x -= speed * dt;
       // 출구 뒤 비우는 구간(feverSpawn)과 출구 착지가 모두 끝나고 출구가 화면 밖으로 나가면 정리
@@ -1707,7 +1704,6 @@ const VERSION = '2026-10-26.38';
       ['길게 누르기', '더 높이, 더 멀리'],
       ['아슬아슬', '보너스 점수'],
       [isTouch ? '탭 연타' : '연타', `${FEVER_SCORE}점 이후 피버 터널 매달리기`],
-      ['LEVEL', `${LEVEL_SCORE}점부터 난이도 상승`],
     ];
     const ground = groundY * viewScale; // 화면 좌표 기준 도로 위치
     const rowH = 30, padX = 16, padY = 12, gap = 12;
@@ -1769,7 +1765,7 @@ const VERSION = '2026-10-26.38';
       ctx.textAlign = 'right';
       ctx.fillText(`SCORE ${score}`, W - 16, 32);
       ctx.font = '14px system-ui, sans-serif';
-      ctx.fillText(`BEST ${best} · ROLLS ${flips || 0}${state === 'playing' && level ? ` · LV ${level}` : ''}`, W - 16, 54);
+      ctx.fillText(`BEST ${best} · ROLLS ${flips || 0}`, W - 16, 54);
     }
     if (paused) {
       // 일시정지 화면: 반투명 어둡게 + 안내
