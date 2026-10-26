@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-26.37';
+const VERSION = '2026-10-26.38';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -145,6 +145,7 @@ const VERSION = '2026-10-26.37';
   const BURST_GAP = 0.035;
   // 일반 구간 최소 간격 = 최소 간격 + 이 값 = 탭 체공 시간(약 0.99초) + 0.1초 → 몇 대가 이어져도 점프당 허용 폭 0.1초 유지
   const CHAIN_GAP = 0.105;
+  const GROUP_PAD = 0.35;   // 최고 속도에서 2~3대 묶음 뒤 추가 간격 (묶음 길이 무관)
   const SPREAD_CUT = 0.18;  // 난이도 값마다 간격 랜덤 폭을 이 비율씩 줄임 (LV1 약 0.5초 → LV3부터 약 0.1초)
   const SPREAD_MIN = 0.1;   // 랜덤 폭 최소 비율
   const BURST_REST = 1.0;   // 러시가 끝난 뒤 쉬는 시간 (박자 깨기)
@@ -392,7 +393,12 @@ const VERSION = '2026-10-26.37';
       addCar(type, x);
       x += type.w + 30;
     }
-    return count > 1 ? (x - 30 - x0) / speed + 0.45 : 0;
+    if (count === 1) return 0;
+    // 묶음도 한 번에 넘고 가장 늦은 점프 시점은 첫 차량이 정하므로, 최고 속도에서는 착지가 묶음 길이와 거의 무관.
+    // 길게 누르기 체공(약 1.25초)이 탭(약 0.99초)보다 긴 만큼만 여유를 둠 → 러시에서도 점프당 허용 폭 0.1초 유지
+    // 그보다 느리면 묶음이 지나가는 시간이 길어 묶음 길이만큼 착지 여유를 둠
+    if (speed >= MAX_SPEED) return GROUP_PAD;
+    return (x - 30 - x0) / speed + 0.45;
   }
 
   // 난이도 값: 단계가 없으면 0, 있으면 단계 + LEVEL_OFFSET
