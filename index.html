@@ -92,7 +92,7 @@
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-24.35';
+const VERSION = '2026-10-26.36';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -870,9 +870,10 @@ const VERSION = '2026-10-24.35';
   }
 
   function glow(x, y, r, rgb, a) {
-    ctx.globalAlpha = a;
+    const prev = ctx.globalAlpha; // 달 페이드처럼 바깥에서 정한 투명도는 유지
+    ctx.globalAlpha = prev * a;
     ctx.drawImage(glowSprite(rgb), x - r, y - r, r * 2, r * 2);
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = prev;
   }
 
   // 달: 초승달 → 상현 → 보름달 → 하현 → 그믐달 순으로 천천히 변하고,
