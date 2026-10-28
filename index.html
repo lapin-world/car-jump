@@ -229,6 +229,7 @@
     <button type="submit">등록</button>
   </form>
   <p class="msg" id="rank-msg"></p>
+  <div id="rank-captcha"></div>
   <ol id="rank-list"></ol>
   <div id="rank-tools" hidden>
     <button class="contest-csv" type="button">⬇ 랭킹 CSV</button>
@@ -314,6 +315,12 @@ const VERSION = '2026-10-28.57';
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
+  // ---------- 게임 규칙 (랭킹 서버 리플레이 검증과 공유) ----------
+  // '@sim-begin' ~ '@sim-end' 사이 코드는 supabase/build-sim.mjs 가 그대로 모아 랭킹 서버(Edge Function)에서
+  // 같은 시드·같은 입력으로 게임을 다시 돌려 점수를 확인함. 이 안에서는 화면(DOM·canvas)과 Math.random 을 쓰지 말 것:
+  // 연출은 smoke · sparks · popup · feedPush · onGameOver · onGameClear 호출로만, 차량 배치 등 무작위는 rng() 로.
+  // 이 코드를 바꾸면 node supabase/build-sim.mjs 를 실행해 서버용 파일과 SIM_VERSION 을 갱신해야 함
+  // @sim-begin
   // 물리 상수: 체공 약 0.9초, 최고 높이 약 185px
   const GRAVITY = 1850;
   const JUMP_VELOCITY = 830;
@@ -368,16 +375,23 @@ const VERSION = '2026-10-28.57';
   const BURST_REST = 1.0;   // 러시가 끝난 뒤 쉬는 시간 (박자 깨기)
   const BURST_PAIR = 0.35;  // 러시 중 2대 연속(길게 누르기) 섞일 확률 — 탭·길게 누르기 번갈아 요구
 
+  // 랭킹 등록 가능한 최대 점수 (만점). 도달하면 게임 클리어. DB check 제약(supabase/scores.sql)과 같은 값이어야 함
+  const MAX_SCORE = 9999;
+  // 달 한 주기(초). 삭(새달)마다 피버타임 판정
+  const MOON_CYCLE = 60;
+
   // 장애물 차량: 테슬라 차종 이미지 (모두 왼쪽을 향하도록 배경 제거·반전한 PNG)
-  // w: 화면 표시 폭(px), hitTop: 이미지 위쪽에서 판정 제외 비율, points: 넘었을 때 점수
+  // w: 화면 표시 폭(px), h: 높이 (이미지 비율대로 미리 계산 — 서버 검증과 같아야 해서 이미지 로드와 무관하게 고정),
+  // hitTop: 이미지 위쪽에서 판정 제외 비율, points: 넘었을 때 점수
   const OBSTACLE_TYPES = [
-    { name: 'model3',     src: 'assets/cars/model3.png',     w: 150, hitTop: 0.15, points: 1 },
-    { name: 'modely',     src: 'assets/cars/modely.png',     w: 140, hitTop: 0.15, points: 1 },
-    { name: 'models',     src: 'assets/cars/models.png',     w: 150, hitTop: 0.15, points: 1 },
-    { name: 'cybercab',   src: 'assets/cars/cybercab.png',   w: 120, hitTop: 0.2,  points: 1 },
-    { name: 'modelx',     src: 'assets/cars/modelx.png',     w: 150, hitTop: 0.35, points: 2 }, // 팔콘윙 도어
-    { name: 'cybertruck', src: 'assets/cars/cybertruck.png', w: 165, hitTop: 0.1,  points: 2 },
+    { name: 'model3',     src: 'assets/cars/model3.png',     w: 150, h: 47, hitTop: 0.15, points: 1 },
+    { name: 'modely',     src: 'assets/cars/modely.png',     w: 140, h: 50, hitTop: 0.15, points: 1 },
+    { name: 'models',     src: 'assets/cars/models.png',     w: 150, h: 48, hitTop: 0.15, points: 1 },
+    { name: 'cybercab',   src: 'assets/cars/cybercab.png',   w: 120, h: 48, hitTop: 0.2,  points: 1 },
+    { name: 'modelx',     src: 'assets/cars/modelx.png',     w: 150, h: 70, hitTop: 0.35, points: 2 }, // 팔콘윙 도어
+    { name: 'cybertruck', src: 'assets/cars/cybertruck.png', w: 165, h: 54, hitTop: 0.1,  points: 2 },
   ];
+  // @sim-end
   // 이미지를 처음 그릴 때 디코딩하느라 프레임이 멈추지 않게, 로드 직후 캔버스에 미리 그려 둠.
   // 야간 장면용으로 살짝 어둡게(밝기 78%) 하는 것도 여기서 한 번만 처리 (매 프레임 ctx.filter 는 느림)
   function bakeCar(img) {
@@ -393,12 +407,8 @@ const VERSION = '2026-10-28.57';
   }
   for (const t of OBSTACLE_TYPES) {
     t.img = new Image();
-    t.img.onload = () => {
-      t.h = Math.round(t.w * t.img.naturalHeight / t.img.naturalWidth);
-      t.sprite = bakeCar(t.img);
-    };
+    t.img.onload = () => { t.sprite = bakeCar(t.img); };
     t.img.src = t.src;
-    t.h = Math.round(t.w * 0.33); // 로드 전 임시 높이
   }
 
   // 세로 화면(좁은 폭)에서도 다가오는 차량이 충분히 보이도록
@@ -410,15 +420,66 @@ const VERSION = '2026-10-28.57';
   let SW = 0, SH = 0, viewScale = 1, dpr = 1; // 실제 화면 크기와 축소 배율
   // 같이 하기: 화면 위쪽 topInset(px)에 상대 화면을 그리고 내 게임은 그 아래에 그림
   let topInset = 0;
+  let best, particles = [], popups = [];
+  // @sim-begin
   let state = 'ready'; // ready | playing | over
-  let speed, distance, score, best, obstacles, spawnTimer, particles, flips, popups, combo, carsPassed, level, burst;
+  let speed, distance, score, obstacles, spawnTimer, flips, combo, carsPassed, level, burst;
   let holding = false; // 점프 버튼을 누르고 있는지
-  let clock = 0;       // 배경 애니메이션용 경과 시간
+  let clock = 0;       // 경과 시간 (배경 애니메이션·피버 주기)
   let player;
   let tunnel = null;   // 하이퍼루프 터널 { x: 입구 위치, len: 길이 }
   let moonCycle = 0;   // 지금까지 지난 달 주기 수 (피버타임 등장 판정)
   let cleared = false; // 만점(MAX_SCORE) 달성으로 끝났는지
   let feverEndAt = -Infinity; // 터널 구간 차량 생성이 끝난 시각
+
+  // 게임은 화면 주사율과 상관없이 STEP초 간격으로 진행 → 어느 기기에서든, 서버에서 다시 돌려도 같은 결과
+  const STEP = 1 / 240;
+  // 차량 배치용 시드 난수: 서버가 준 시드로 시작하므로 서버도 같은 차량 배치를 다시 만들 수 있음
+  function mulberry32(a) {
+    return () => {
+      a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  let rng = mulberry32(1);
+  let simSteps = 0;   // 이번 판 진행 스텝 수
+  let replay = null;  // 이번 판 기록 { w: 화면 폭, c: 시작 시각, h: 누르고 시작, it: 아이템전, ev: [[스텝, 종류, 값]...] }
+
+  function simStart(seed, withItems) {
+    simItems = withItems;
+    reset();
+    rng = mulberry32(seed);
+    simSteps = 0;
+    replay = { w: W, c: clock, h: holding ? 1 : 0, it: withItems ? 1 : 0, ev: [] };
+    state = 'playing';
+    jump();
+  }
+
+  // 게임에 영향을 주는 입력은 모두 여기로. 게임 중이면 스텝 번호와 함께 기록해 서버가 같은 순간에 다시 적용함
+  // H 누름 · R 뗌 · T 점프/연타 · G 일시정지 해제 · I 아이템 사용(칸) · A 공격 받음(종류) · W 화면 폭 바뀜(폭)
+  function simInput(c, a) {
+    if ((c === 'H' && holding) || (c === 'R' && !holding) || (c === 'W' && W === a)) return;
+    if (state === 'playing') replay.ev.push(a === undefined ? [simSteps, c] : [simSteps, c, a]);
+    return applyInput(c, a);
+  }
+
+  function applyInput(c, a) {
+    switch (c) {
+      case 'H': holding = true; return;
+      case 'R': holding = false; return;
+      case 'T': if (state === 'playing') feverTap() || jump(); return;
+      case 'G': // 일시정지 해제: 누르던 입력은 끊고, 천장에 매달려 있었으면 바로 떨어지지 않게
+        holding = false;
+        if (player.mode === 'ceiling') player.lastTap = clock;
+        return;
+      case 'I': return useItemEffect(a);
+      case 'A': return attackEffect(a);
+      case 'W': W = a; if (player) player.x = Math.max(100, W * 0.2); return;
+    }
+  }
+  // @sim-end
 
   try { best = Number(localStorage.getItem('roadster-best')) || 0; } catch { best = 0; }
 
@@ -438,13 +499,13 @@ const VERSION = '2026-10-28.57';
     canvas.style.width = `${SW}px`;
     canvas.style.height = `${window.innerHeight}px`;
     viewScale = Math.min(1, SW / VIEW_MIN_W, SH / VIEW_MIN_H);
-    W = SW / viewScale;
+    simInput('W', SW / viewScale); // 게임 중에 바뀌면 차량 등장 위치가 달라지므로 입력으로 기록
     H = SH / viewScale;
     // 세로 화면은 하늘이 지나치게 넓어지지 않게 도로를 화면 중간쯤에 둠
     groundY = Math.round(H * (SH > SW ? 0.6 : 0.72));
-    if (player) player.x = Math.max(100, W * 0.2);
   }
 
+  // @sim-begin
   function reset() {
     speed = START_SPEED;
     distance = 0;
@@ -455,9 +516,7 @@ const VERSION = '2026-10-28.57';
     level = 0;
     burst = 0; // 남은 러시 차량 수
     feverEndAt = -Infinity;
-    popups = [];
     obstacles = [];
-    particles = [];
     spawnTimer = 1.2;
     player = {
       x: Math.max(100, W * 0.2), y: 0, vy: 0, roll: 0, airTime: 0,
@@ -483,6 +542,7 @@ const VERSION = '2026-10-28.57';
     player.jumpNear = 0;
     smoke(player.x - 40 * CAR_SCALE, groundY - 6, 8, 40);
   }
+  // @sim-end
 
   // 게임 오버 화면은 실수로 닫히지 않게 RESTART_HOLD초 동안 길게 눌러야 다시 시작
   const RESTART_HOLD = 0.6;
@@ -491,7 +551,7 @@ const VERSION = '2026-10-28.57';
   function handleInput() {
     if (!mpDialog.hidden) return;
     if (paused) return setPaused(false); // 일시정지 중 입력은 재개만 (점프로 이어지지 않음)
-    if (state === 'playing') return feverTap() || jump();
+    if (state === 'playing') return simInput('T');
     if (room) return; // 같이 하기 방에서는 방장이 '시작'을 눌러야 다 같이 출발
     if (state === 'over') {
       restartHold = clock;
@@ -504,10 +564,12 @@ const VERSION = '2026-10-28.57';
   function startGame() {
     if (!room && pendingVersion && applyUpdate()) return; // 방에 있는 동안은 새로고침으로 방이 끊기지 않게
     hideRanking();
-    reset();
-    state = 'playing';
+    feed = [];
+    particles = [];
+    popups = [];
+    game = takeSession();
+    simStart(game.seed, itemMode());
     pauseBtn.hidden = false;
-    jump();
     botsStart();
     roomStatus();
   }
@@ -520,10 +582,9 @@ const VERSION = '2026-10-28.57';
   function setPaused(on) {
     if (on && state !== 'playing') return;
     paused = on;
-    holding = false;
+    simInput(on ? 'R' : 'G');
     pauseBtn.textContent = on ? '▶' : '❚❚';
     pauseBtn.setAttribute('aria-label', on ? '계속하기' : '일시정지');
-    if (!on && player && player.mode === 'ceiling') player.lastTap = clock; // 재개 직후 바로 떨어지지 않게
   }
 
   pauseBtn.addEventListener('pointerdown', (e) => e.stopPropagation()); // 버튼 탭이 점프로 전달되지 않게
@@ -540,30 +601,30 @@ const VERSION = '2026-10-28.57';
     if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
     if (e.repeat) return;
-    holding = true;
+    simInput('H');
     handleInput();
   });
   window.addEventListener('keyup', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') holding = false;
+    if (e.key === 'Enter' || e.key === ' ') simInput('R');
   });
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    holding = true;
+    simInput('H');
     if (!modeEl.hidden || !contestEl.hidden) return; // 시작 화면에서는 혼자 하기 / 같이 하기 버튼으로 선택 (키보드 Enter/Space 는 혼자 하기)
     handleInput();
   });
-  window.addEventListener('pointerup', () => { holding = false; });
-  window.addEventListener('pointercancel', () => { holding = false; });
-  window.addEventListener('blur', () => { holding = false; setPaused(true); });
+  window.addEventListener('pointerup', () => { simInput('R'); });
+  window.addEventListener('pointercancel', () => { simInput('R'); });
+  window.addEventListener('blur', () => { simInput('R'); setPaused(true); });
 
   const isTouch = window.matchMedia('(pointer: coarse)').matches; // 조작 안내 문구용 (탭 / 키보드)
 
   // ---------- 파티클 (불꽃 / 연기) ----------
 
-  function sparks(x, y, n, color) {
+  function sparks(x, y, n, color, spread = 0) {
     for (let i = 0; i < n; i++) {
       particles.push({
-        kind: 'spark', x, y,
+        kind: 'spark', x: x + (Math.random() - 0.5) * spread, y,
         vx: -Math.random() * 160 - 40,
         vy: -Math.random() * 160,
         life: 0.5 + Math.random() * 0.3,
@@ -589,8 +650,13 @@ const VERSION = '2026-10-28.57';
     }
   }
 
+  function popup(text, color) {
+    popups.push({ text, color, x: player.x, y: groundY - player.y - 70 - popups.length * 22, life: 1.1 });
+  }
+
+  // @sim-begin
   function randomType() {
-    return OBSTACLE_TYPES[Math.floor(Math.random() * OBSTACLE_TYPES.length)];
+    return OBSTACLE_TYPES[Math.floor(rng() * OBSTACLE_TYPES.length)];
   }
 
   function addCar(type, x) {
@@ -612,13 +678,13 @@ const VERSION = '2026-10-28.57';
   // 연속 차량은 길게 누른 점프로 넘을 수 있는 속도 구간에서만 등장. 반환값은 다음 생성까지 추가 대기 시간
   function spawnObstacle(inBurst) {
     const x0 = W + 40;
-    const r = Math.random();
+    const r = rng();
     let count = 1;
     if (inBurst) {
       if (speed >= 450 && r < BURST_PAIR) count = 2;
     } else if (speed >= 650 && r < 0.15 + 0.04 * diff()) count = 3;
     else if (speed >= 450 && r < 0.4 + 0.06 * diff()) count = 2;
-    if (!inBurst && count === 1 && carsPassed >= ROLL_AFTER && Math.random() < ROLL_CHANCE + 0.03 * diff()) {
+    if (!inBurst && count === 1 && carsPassed >= ROLL_AFTER && rng() < ROLL_CHANCE + 0.03 * diff()) {
       // 앞 차량과 겹치지 않게 조금 더 뒤에서 등장
       const x = x0 + speed * 0.3;
       const o = addRival(x);
@@ -649,20 +715,16 @@ const VERSION = '2026-10-28.57';
     const minGap = 0.85 + 120 / speed;
     const d = diff();
     // 터널 출구 배럴롤 착지가 첫 점프를 늦추므로 터널 뒤 첫 차량은 러시로 시작하지 않음
-    if (!burst && d && clock - feverEndAt > 1 && Math.random() < 0.1 + 0.05 * d) burst = Math.min(BURST_MAX, 3 + Math.floor(Math.random() * (1 + d / 2)));
+    if (!burst && d && clock - feverEndAt > 1 && rng() < 0.1 + 0.05 * d) burst = Math.min(BURST_MAX, 3 + Math.floor(rng() * (1 + d / 2)));
     if (burst) {
       burst--;
       const extra = spawnObstacle(true);
-      if (!burst) return minGap + extra + BURST_REST + Math.random() * 0.5;
+      if (!burst) return minGap + extra + BURST_REST + rng() * 0.5;
       return minGap + extra + BURST_GAP;
     }
     const extra = spawnObstacle();
     // 단계가 높으면 랜덤 폭이 작아 일반 차량이 끝없이 빠듯하게 이어질 수 있음 → CHAIN_GAP 으로 허용 폭이 쌓여 줄지 않게 함
-    return minGap + extra + (d ? CHAIN_GAP : 0) + Math.random() * 1.1 * Math.max(SPREAD_MIN, 1 - SPREAD_CUT * d);
-  }
-
-  function popup(text, color) {
-    popups.push({ text, color, x: player.x, y: groundY - player.y - 70 - popups.length * 22, life: 1.1 });
+    return minGap + extra + (d ? CHAIN_GAP : 0) + rng() * 1.1 * Math.max(SPREAD_MIN, 1 - SPREAD_CUT * d);
   }
 
   // 착지 시 보너스 정산: 아슬아슬 콤보 + 한 번에 여러 대 넘기
@@ -704,10 +766,10 @@ const VERSION = '2026-10-28.57';
     if (x0 < tunnel.x + speed * 0.9) return 0.15;
     if (x0 + 170 < end - 700) {
       // 라이벌도 가끔 등장하지만 터널 안이라 뛰지 않고 바닥에 붙어 아래로 지나감 (updateRival)
-      if (carsPassed >= ROLL_AFTER && Math.random() < ROLL_CHANCE) addRival(x0);
+      if (carsPassed >= ROLL_AFTER && rng() < ROLL_CHANCE) addRival(x0);
       else addCar(randomType(), x0);
       obstacles[obstacles.length - 1].fever = true;
-      return 0.55 + Math.random() * 0.7;
+      return 0.55 + rng() * 0.7;
     }
     if (x0 < end + speed * (EXIT_TIME + 0.6)) return 0.15;
     feverEndAt = clock;
@@ -720,7 +782,7 @@ const VERSION = '2026-10-28.57';
     const m = player.mode;
     if (m === 'ceiling' || m === 'toCeiling') {
       player.lastTap = clock;
-      if (m === 'ceiling') sparks(player.x + (Math.random() - 0.5) * 100, groundY - TUNNEL_CEIL + 4, 5, '#f8fafc');
+      if (m === 'ceiling') sparks(player.x, groundY - TUNNEL_CEIL + 4, 5, '#f8fafc', 100);
       return true;
     }
     if (m) return true; // 추락·착지 중에는 입력 무시
@@ -796,30 +858,16 @@ const VERSION = '2026-10-28.57';
     }
   }
 
-  function update(dt) {
+  // 게임 1스텝(STEP초). 게임 중이 아니어도 시계·달 주기는 계속 감
+  function simStep() {
+    const dt = STEP;
     clock += dt;
-    if (state === 'over' && restartHold !== null) {
-      if (!holding) restartHold = null;
-      else if (clock - restartHold >= RESTART_HOLD) {
-        restartHold = null;
-        if (contest) contestNext(); // 대회 모드: 다음 도전자 이름 입력 화면으로
-        else startGame();
-      }
-    }
-    // 바퀴는 항상 시계 방향으로 보이게: 스포크 5개(72° 간격)라 한 프레임에 36° 이상 돌면
-    // 눈에는 거꾸로 도는 것처럼 보이므로(마차 바퀴 효과) 프레임당 회전량을 0.45rad(약 26°)로 제한
-    player.wheel += Math.min(speed * dt / 14, 0.45);
-    updateParticles(dt);
-    for (const p of popups) { p.life -= dt; p.y -= 40 * dt; }
-    popups = popups.filter((p) => p.life > 0);
-    if (cleared && Math.random() < dt * 4) {
-      sparks(W * (0.2 + Math.random() * 0.6), groundY * (0.15 + Math.random() * 0.4), 24, ['#fbbf24', '#f472b6', '#67e8f9', '#6ee7b7'][Math.floor(Math.random() * 4)]);
-    }
     // 달이 한 주기를 돌 때마다(삭) 피버타임 판정
     const cycle = Math.floor(clock / MOON_CYCLE + 0.1);
     const newMoon = cycle !== moonCycle;
     moonCycle = cycle;
     if (state !== 'playing') return;
+    simSteps++;
     if (newMoon && score >= FEVER_SCORE && !tunnel) startFever();
     const lv = score < LEVEL_SCORE ? 0 : Math.min(MAX_LEVEL, 1 + Math.floor((score - LEVEL_SCORE) / LEVEL_STEP));
     if (lv > level) level = lv; // 단계는 화면에 표시하지 않고 난이도에만 반영
@@ -888,10 +936,9 @@ const VERSION = '2026-10-28.57';
     }
     obstacles = obstacles.filter((o) => o.x + o.w > -50);
 
-    // 충돌 판정 (회전 중인 차체를 감안해 박스를 조금 줄임)
+    // 충돌 판정 (회전 중인 차체를 감안해 박스를 조금 줄임). 높이는 도로 기준이라 화면 높이와 무관
     const half = 44 * CAR_SCALE;
     const px1 = player.x - half, px2 = player.x + half;
-    const pBottom = groundY - player.y;
     for (const o of obstacles) {
       if (o.rival && o.hop > 0) {
         // 공중의 라이벌: 높이 구간 [hop, hop + 차 높이]와 우리 차 [y, y + PLAYER_H]가 겹치면 공중 충돌
@@ -903,10 +950,10 @@ const VERSION = '2026-10-28.57';
         continue;
       }
       // 이미지 여백을 감안해 좌우 8%, 위쪽 hitTop 비율만큼 판정 제외
-      const oTop = groundY - o.h * (1 - o.type.hitTop);
+      const oTop = o.h * (1 - o.type.hitTop);
       if (px2 > o.x + o.w * 0.08 && px1 < o.x + o.w * 0.92) {
-        o.minClear = Math.min(o.minClear, oTop - pBottom); // 차량 위 여유 높이 (아슬아슬 판정)
-        if (pBottom > oTop) {
+        o.minClear = Math.min(o.minClear, player.y - oTop); // 차량 위 여유 높이 (아슬아슬 판정)
+        if (player.y < oTop) {
           gameOver();
           break;
         }
@@ -914,6 +961,41 @@ const VERSION = '2026-10-28.57';
     }
     itemTick();
     if (state === 'playing' && score >= MAX_SCORE) gameClear();
+  }
+
+  function gameOver() {
+    state = 'over';
+    onGameOver();
+  }
+
+  // 만점 달성: 점수를 만점으로 맞추고 게임 종료 + 축하 화면
+  function gameClear() {
+    score = MAX_SCORE;
+    cleared = true;
+    state = 'over';
+    onGameClear();
+  }
+  // @sim-end
+
+  // 화면 연출 (프레임마다): 다시 시작 길게 누르기, 바퀴, 파티클, 점수 문구, 만점 축하 불꽃
+  function animate(dt) {
+    if (state === 'over' && restartHold !== null) {
+      if (!holding) restartHold = null;
+      else if (clock - restartHold >= RESTART_HOLD) {
+        restartHold = null;
+        if (contest) contestNext(); // 대회 모드: 다음 도전자 이름 입력 화면으로
+        else startGame();
+      }
+    }
+    // 바퀴는 항상 시계 방향으로 보이게: 스포크 5개(72° 간격)라 한 프레임에 36° 이상 돌면
+    // 눈에는 거꾸로 도는 것처럼 보이므로(마차 바퀴 효과) 프레임당 회전량을 0.45rad(약 26°)로 제한
+    player.wheel += Math.min(speed * dt / 14, 0.45);
+    updateParticles(dt);
+    for (const p of popups) { p.life -= dt; p.y -= 40 * dt; }
+    popups = popups.filter((p) => p.life > 0);
+    if (cleared && Math.random() < dt * 4) {
+      sparks(W * (0.2 + Math.random() * 0.6), groundY * (0.15 + Math.random() * 0.4), 24, ['#fbbf24', '#f472b6', '#67e8f9', '#6ee7b7'][Math.floor(Math.random() * 4)]);
+    }
   }
 
   function updateParticles(dt) {
@@ -934,29 +1016,23 @@ const VERSION = '2026-10-28.57';
     particles = particles.filter((p) => p.life > 0);
   }
 
-  function gameOver() {
-    state = 'over';
-    pauseBtn.hidden = true;
-    restartHold = null; // 충돌 순간 누르고 있던 입력은 다시 시작으로 이어지지 않게
+  function onGameOver() {
     sparks(player.x + 30, groundY - player.y, 30, '#ef4444');
     smoke(player.x + 30, groundY - player.y, 14, 60);
+    endGame();
+  }
+
+  function onGameClear() {
+    endGame();
+  }
+
+  function endGame() {
+    pauseBtn.hidden = true;
+    restartHold = null; // 충돌 순간 누르고 있던 입력은 다시 시작으로 이어지지 않게
     if (score > best) {
       best = score;
       try { localStorage.setItem('roadster-best', String(best)); } catch {}
     }
-    showRanking();
-    roomStatus();
-  }
-
-  // 만점 달성: 점수를 만점으로 맞추고 게임 종료 + 축하 화면
-  function gameClear() {
-    score = MAX_SCORE;
-    cleared = true;
-    state = 'over';
-    pauseBtn.hidden = true;
-    restartHold = null;
-    best = score;
-    try { localStorage.setItem('roadster-best', String(best)); } catch {}
     showRanking();
     roomStatus();
   }
@@ -990,11 +1066,16 @@ const VERSION = '2026-10-28.57';
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 
   // ---------- 온라인 랭킹 (Supabase) ----------
-  // publishable 키는 공개용 키라 코드에 포함해도 됨. 쓰기 권한은 DB의 RLS 정책(supabase/scores.sql)으로 제한
+  // publishable 키는 공개용 키라 코드에 포함해도 됨. 랭킹 조회만 DB 에 직접 하고, 등록은 Edge Function(supabase/functions/score)만 가능:
+  // 시작 전에 서버에서 받은 시드·토큰으로 한 판을 하고, 끝나면 입력 기록(리플레이)을 보내 서버가 게임을 다시 돌려 점수를 확인함
   const SUPABASE_URL = 'https://auwkyehgnxejxacoklqt.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_I-9YEVmXr6EnOGLPzjL-qg_OZlnHI5d';
-  // 랭킹 등록 가능한 최대 점수 (만점). DB check 제약(supabase/scores.sql)과 같은 값이어야 함
-  const MAX_SCORE = 9999;
+  const SCORE_FN = `${SUPABASE_URL}/functions/v1/score`;
+  // Cloudflare Turnstile 사이트 키 (자동 등록 봇 차단). 비워 두면 사람 확인 없이 등록 — supabase/README.md 참고
+  const TURNSTILE_SITE_KEY = '';
+  // 게임 규칙 버전: supabase/build-sim.mjs 가 @sim 코드의 해시로 채움. 서버와 다르면 랭킹 등록 불가
+  const SIM_VERSION = 'f53b00742474';
+  const SESSION_TTL = 6 * 3600 * 1000; // 미리 받아 둔 시드·토큰 사용 기한 (서버 기한 12시간보다 짧게)
   const canSubmit = (v) => Number.isInteger(v) && v > 0 && v <= MAX_SCORE;
   const rankEl = document.getElementById('rank');
   const rankForm = document.getElementById('rank-form');
@@ -1003,6 +1084,8 @@ const VERSION = '2026-10-28.57';
   const rankMsg = document.getElementById('rank-msg');
   const rankList = document.getElementById('rank-list');
   let submittedScore = false;
+  let session = null, sessionReq = null, sessionError = ''; // 다음 판에 쓸 시드·토큰
+  let game = null; // 이번 판 { token, seed } (token 이 없으면 랭킹 등록 불가)
 
   function api(path, options = {}) {
     return fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
@@ -1015,7 +1098,78 @@ const VERSION = '2026-10-28.57';
     });
   }
 
-  async function loadRanking() {
+  function scoreApi(body) {
+    return fetch(SCORE_FN, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(async (r) => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok && !data.error) throw new Error(r.status);
+      return data;
+    });
+  }
+
+  // 다음 판에 쓸 시드·토큰을 미리 받아 둠 (시작을 누르면 기다리지 않고 바로 출발하도록)
+  function fetchSession() {
+    if (contest || session || sessionReq) return; // 대회 모드는 랭킹 서버를 쓰지 않음
+    sessionReq = scoreApi({ action: 'start' }).then((d) => {
+      if (d.v && d.v !== SIM_VERSION) sessionError = 'version';
+      else if (d.token) { session = { token: d.token, seed: d.seed, at: Date.now() }; sessionError = ''; }
+      else sessionError = d.error || 'fail';
+    }, () => { sessionError = 'fail'; }).finally(() => { sessionReq = null; });
+  }
+
+  // 받아 둔 게 없으면 (서버 연결 실패 등) 혼자 정한 시드로 하고 이번 판은 랭킹 등록 불가
+  function takeSession() {
+    const s = session && Date.now() - session.at < SESSION_TTL ? session : null;
+    session = null;
+    fetchSession();
+    return s || { token: null, seed: Math.floor(Math.random() * 4294967296) };
+  }
+
+  // 이번 판을 등록할 수 없는 이유 (등록 가능하면 '')
+  function rankNote() {
+    if (game && game.token) return '';
+    if (sessionError === 'version') return '게임이 새 버전으로 바뀌었어요. 새로고침하면 랭킹에 등록할 수 있어요';
+    if (sessionError === 'rate') return '요청이 너무 많아 이번 판은 랭킹에 등록할 수 없어요';
+    return '랭킹 서버에 연결되지 않아 이번 판은 등록할 수 없어요';
+  }
+
+  // Cloudflare Turnstile: 등록할 때만 사람 확인 (대부분은 화면에 아무것도 안 뜨고, 의심스러울 때만 체크 상자 표시)
+  let tsLoad = null, tsWidget = null, tsWait = null;
+  function loadTurnstile() {
+    if (window.turnstile) return Promise.resolve();
+    tsLoad = tsLoad || new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      s.onload = resolve;
+      s.onerror = () => { tsLoad = null; reject(new Error('turnstile')); };
+      document.head.append(s);
+    });
+    return tsLoad;
+  }
+  async function captchaToken() {
+    if (!TURNSTILE_SITE_KEY) return '';
+    await loadTurnstile();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => finish(null), 60000);
+      const finish = (t) => { clearTimeout(timer); tsWait = null; t ? resolve(t) : reject(new Error('captcha')); };
+      tsWait = finish;
+      if (tsWidget === null) {
+        tsWidget = window.turnstile.render('#rank-captcha', {
+          sitekey: TURNSTILE_SITE_KEY,
+          execution: 'execute',
+          appearance: 'interaction-only',
+          callback: (t) => tsWait && tsWait(t),
+          'error-callback': () => tsWait && tsWait(null),
+        });
+      } else window.turnstile.reset(tsWidget);
+      window.turnstile.execute(tsWidget);
+    });
+  }
+
+  async function loadRanking(note = '') {
     rankMsg.textContent = '랭킹 불러오는 중…';
     try {
       const rows = await api('scores?select=name,score&order=score.desc,created_at.asc&limit=10');
@@ -1031,9 +1185,9 @@ const VERSION = '2026-10-28.57';
         li.append(no, n, v);
         return li;
       }));
-      rankMsg.textContent = rows.length ? 'TOP 10' : '아직 기록이 없어요';
+      rankMsg.textContent = note || (rows.length ? 'TOP 10' : '아직 기록이 없어요');
     } catch {
-      rankMsg.textContent = '랭킹을 불러오지 못했어요';
+      rankMsg.textContent = note || '랭킹을 불러오지 못했어요';
     }
   }
 
@@ -1043,15 +1197,16 @@ const VERSION = '2026-10-28.57';
     rankForm.querySelector('button').disabled = false;
     try { rankName.value = localStorage.getItem('roadster-name') || ''; } catch {}
     rankEl.hidden = false;
+    const note = canSubmit(score) ? rankNote() : '';
     if (room) {
       // 같이 하기: 방에 들어올 때 입력한 이름으로 바로 랭킹 등록
       rankForm.hidden = true;
-      if (canSubmit(score)) submitRank(room.me.name, true);
-      else loadRanking();
+      if (canSubmit(score) && !note) submitRank(room.me.name, true);
+      else loadRanking(note);
       return;
     }
-    rankForm.hidden = !canSubmit(score);
-    loadRanking();
+    rankForm.hidden = !canSubmit(score) || !!note;
+    loadRanking(note);
   }
 
   function hideRanking() {
@@ -1067,17 +1222,40 @@ const VERSION = '2026-10-28.57';
     submitRank(rankName.value.trim().slice(0, 20));
   });
 
+  // 서버 오류 코드 → 안내 문구. final: 다시 시도해도 안 되는 경우 (입력 폼 닫음)
+  const RANK_ERRORS = {
+    version: ['게임이 새 버전으로 바뀌어 이번 판은 등록할 수 없어요. 새로고침해 주세요', true],
+    used: ['이미 등록한 판이에요', true],
+    invalid: ['등록할 수 없는 판이에요', true],
+    expired: ['등록 가능 시간이 지났어요', true],
+    mismatch: ['점수를 확인하지 못해 등록할 수 없어요', true],
+    replay: ['점수를 확인하지 못해 등록할 수 없어요', true],
+    too_fast: ['점수를 확인하지 못해 등록할 수 없어요', true],
+    captcha: ['사람 확인에 실패했어요. 다시 시도해 주세요', false],
+    rate: ['요청이 너무 많아요. 잠시 후 다시 시도해 주세요', false],
+    name: ['이름은 1~12자로 써 주세요', false],
+  };
+
   // auto: 같이 하기에서 자동 등록 (실패해도 입력 폼 없이 안내만)
   async function submitRank(name, auto = false) {
-    if (!name || submittedScore || !canSubmit(score)) return;
+    if (!name || submittedScore || !canSubmit(score) || !game || !game.token) return;
     submittedScore = true;
     rankForm.querySelector('button').disabled = true;
+    let res;
     try {
-      // 같은 이름은 한 줄만 유지하고 최고 점수만 갱신 (DB 함수 submit_score). 'reset' 이면 랭킹 초기화됨
-      const result = await api('rpc/submit_score', { method: 'POST', body: JSON.stringify({ p_name: name, p_score: score }) });
+      const captcha = await captchaToken();
+      // 서버가 리플레이로 점수를 다시 계산해 같을 때만 등록. 같은 이름은 최고 점수만 갱신, 'reset' 이면 랭킹 초기화됨
+      res = await scoreApi({
+        action: 'submit', v: SIM_VERSION, token: game.token, name, captcha, score,
+        replay: { ...replay, n: simSteps },
+      });
+    } catch (e) {
+      res = { error: e.message === 'captcha' ? 'captcha' : 'network' };
+    }
+    if (res.result === 'ok' || res.result === 'reset') {
       rankForm.hidden = true;
       rankName.blur();
-      if (result === 'reset') {
+      if (res.result === 'reset') {
         rankName.value = '';
         try { localStorage.removeItem('roadster-name'); } catch {}
         await loadRanking();
@@ -1087,12 +1265,15 @@ const VERSION = '2026-10-28.57';
       try { localStorage.setItem('roadster-name', name); } catch {}
       await loadRanking();
       if (auto) rankMsg.textContent = `'${name}' 이름으로 랭킹에 등록했어요${rankMsg.textContent === 'TOP 10' ? ' · TOP 10' : ''}`;
-    } catch {
+      return;
+    }
+    const [msg, final] = RANK_ERRORS[res.error] || ['등록에 실패했어요. 다시 시도해 주세요', false];
+    if (final) rankForm.hidden = true;
+    else {
       submittedScore = false;
       rankForm.querySelector('button').disabled = false;
-      if (auto) { rankMsg.textContent = '랭킹 등록에 실패했어요'; return; }
-      rankMsg.textContent = name.length > 12 ? '이름은 12자까지 쓸 수 있어요' : '등록에 실패했어요. 다시 시도해 주세요';
     }
+    rankMsg.textContent = auto ? `랭킹 등록에 실패했어요: ${msg}` : msg;
   }
 
   // ---------- 대회 모드 (한 PC 에서 도전자별 랭킹) ----------
@@ -1230,9 +1411,12 @@ const VERSION = '2026-10-28.57';
     contest = on;
     try { if (on) localStorage.setItem(CONTEST_KEY, '1'); else localStorage.removeItem(CONTEST_KEY); } catch {}
     contestMsg.textContent = '';
+    if (!on) fetchSession();
   }
   document.getElementById('mode-contest').addEventListener('click', (e) => { e.currentTarget.blur(); setContest(true); });
   document.getElementById('contest-off').addEventListener('click', (e) => { e.currentTarget.blur(); setContest(false); });
+
+  fetchSession();
 
   // ---------- 같이 하기 (멀티플레이, Supabase Realtime) ----------
   // 방 코드 = Realtime 채널 이름. 접속자 목록은 Presence, 시작 신호·게임 화면 상태는 Broadcast 로 주고받음.
@@ -1386,7 +1570,7 @@ const VERSION = '2026-10-28.57';
     mpMsg.textContent = code ? `방 ${code} 에 참여해요. 이름을 입력해 주세요` : '';
     mpStep(1);
     mpDialog.hidden = false;
-    holding = false;
+    simInput('R');
     mpName.focus();
   }
 
@@ -1864,6 +2048,7 @@ const VERSION = '2026-10-28.57';
   // 점수가 ITEM_EVERY 점 오를 때마다 무작위 아이템 1개 (공격·방어 합쳐 최대 ITEM_MAX 개 보관, 꽉 차면 버림).
   // 공격 아이템은 같은 방에서 달리고 있는 상대 모두에게, 방어는 나에게만 적용.
   // 같은 공격이 겹치면(여러 명이 동시에 보내거나 효과 중에 또 받으면) 화이트아웃·안개는 시간이 늘고 라이벌은 대수가 늘어남
+  // @sim-begin
   const ITEM_EVERY = 50;
   const ITEM_MAX = 3;
   const ATTACK_TIME = 3;   // 화이트아웃·안개 지속 시간(초)
@@ -1876,9 +2061,80 @@ const VERSION = '2026-10-28.57';
     shield: { icon: '🛡️', name: '방어막' },    // 받은 공격 제거 + 일정 시간 공격 막기
   };
   const ITEM_KINDS = Object.keys(ITEM_INFO);
-  const itemsEl = document.getElementById('items');
-  let items = [], nextItemAt = ITEM_EVERY, whiteUntil = 0, fogUntil = 0, shieldUntil = 0, itemsKey = '';
+  let items = [], nextItemAt = ITEM_EVERY, whiteUntil = 0, fogUntil = 0, shieldUntil = 0;
   let whiteFrom = 0, fogFrom = 0; // 효과가 시작된 시각 (겹쳐서 늘어나도 시작 페이드는 한 번만)
+  let simItems = false; // 이번 판이 아이템전인지 (시작할 때 정함)
+
+  function resetItems() {
+    items = [];
+    nextItemAt = ITEM_EVERY;
+    whiteUntil = fogUntil = shieldUntil = whiteFrom = fogFrom = 0;
+  }
+
+  function itemTick() {
+    if (!simItems) return;
+    while (score >= nextItemAt) {
+      nextItemAt += ITEM_EVERY;
+      if (items.length >= ITEM_MAX) continue;
+      const k = ITEM_KINDS[Math.floor(rng() * ITEM_KINDS.length)];
+      items.push(k);
+      feedPush(`🎁 ${ITEM_INFO[k].icon} ${ITEM_INFO[k].name} 획득`, '#a78bfa');
+    }
+  }
+
+  // 아이템 사용: 칸에서 빼고, 방어막이면 나에게 적용 (공격 전송은 useItem 에서)
+  function useItemEffect(i) {
+    const k = items[i];
+    if (!k) return;
+    items.splice(i, 1);
+    if (k !== 'shield') return;
+    // 지금 받은 공격 제거: 화이트아웃·안개 끝내고, 아직 다가오는 공격 차량은 치움 (머리 위를 넘는 중인 라이벌은 그대로)
+    whiteUntil = fogUntil = 0;
+    obstacles = obstacles.filter((o) => !o.attack || o.passed || (o.rival && o.t >= 0 && !o.landed) || o.x < player.x + 60 * CAR_SCALE);
+    // 방어막 중에 또 쓰면 남은 시간에 더함
+    shieldUntil = Math.max(shieldUntil, clock) + SHIELD_TIME;
+  }
+
+  // 받은 공격 적용. 알림 문구용 결과를 돌려줌
+  function attackEffect(kind) {
+    if (clock < shieldUntil) return { blocked: true };
+    if (kind === 'white' || kind === 'fog') {
+      // 이미 같은 효과 중이면 남은 시간에 ATTACK_TIME 을 더함
+      const until = kind === 'white' ? whiteUntil : fogUntil;
+      const stacked = clock < until;
+      const next = (stacked ? until : clock) + ATTACK_TIME;
+      if (kind === 'white') { if (!stacked) whiteFrom = clock; whiteUntil = next; }
+      else { if (!stacked) fogFrom = clock; fogUntil = next; }
+      return { stacked, left: next - clock };
+    }
+    // 라이벌은 받을 때마다 한 대씩 더 (앞 라이벌 뒤에 차례로 배치)
+    forceRival(kind === 'sky');
+    return { n: obstacles.filter((o) => o.attack && !o.passed && !!o.sky === (kind === 'sky')).length };
+  }
+
+  // 공격으로 라이벌을 바로 등장시킴. 이미 오고 있는 차량을 다 지난 뒤에 오게 하고, 다음 차량도 그만큼 늦춰
+  // 피할 수 없는 배치는 만들지 않음 (점프 착지 여유 GAP 초)
+  function forceRival(sky) {
+    const GAP = 0.9;
+    // 각 차량이 내 차를 다 지나가는 시각(초 후)
+    const done = (o) => o.rival && !o.sky ? (o.x - o.jumpAt) / speed + ROLL_TIME + 0.3 : (o.x + o.w - player.x) / speed;
+    let t = 0;
+    for (const o of obstacles) if (!o.passed && !(o.rival && o.t >= 0)) t = Math.max(t, done(o));
+    const x = Math.max(W + 40, player.x + speed * (t + GAP));
+    const o = addRival(x);
+    o.attack = true;
+    if (sky) {
+      o.sky = true;
+      o.type = SKY_RIVAL;
+      o.landed = true; // 뛰지 않음
+    }
+    // 다음 일반 차량은 이 라이벌이 지나간 뒤에 오도록
+    spawnTimer = Math.max(spawnTimer, done(o) + GAP - (W + 40 - player.x) / speed);
+    burst = 0;
+  }
+  // @sim-end
+  const itemsEl = document.getElementById('items');
+  let itemsKey = '';
 
   function itemMode() {
     return !!room && room.mode === 'item';
@@ -1920,24 +2176,6 @@ const VERSION = '2026-10-28.57';
     }
   }
 
-  function resetItems() {
-    feed = [];
-    items = [];
-    nextItemAt = ITEM_EVERY;
-    whiteUntil = fogUntil = shieldUntil = whiteFrom = fogFrom = 0;
-  }
-
-  function itemTick() {
-    if (!itemMode()) return;
-    while (score >= nextItemAt) {
-      nextItemAt += ITEM_EVERY;
-      if (items.length >= ITEM_MAX) continue;
-      const k = ITEM_KINDS[Math.floor(Math.random() * ITEM_KINDS.length)];
-      items.push(k);
-      feedPush(`🎁 ${ITEM_INFO[k].icon} ${ITEM_INFO[k].name} 획득`, '#a78bfa');
-    }
-  }
-
   function useItem(i) {
     if (state !== 'playing' || paused || !itemMode() || !items[i]) return;
     const k = items[i];
@@ -1948,13 +2186,8 @@ const VERSION = '2026-10-28.57';
       targets = [...room.players.values()].filter((p) => p.id !== myId && running(p));
       if (!targets.length) { feedPush('공격할 상대가 없어요 (아이템은 그대로)', '#94a3b8'); return; }
     }
-    items.splice(i, 1);
+    simInput('I', i);
     if (k === 'shield') {
-      // 지금 받은 공격 제거: 화이트아웃·안개 끝내고, 아직 다가오는 공격 차량은 치움 (머리 위를 넘는 중인 라이벌은 그대로)
-      whiteUntil = fogUntil = 0;
-      obstacles = obstacles.filter((o) => !o.attack || o.passed || (o.rival && o.t >= 0 && !o.landed) || o.x < player.x + 60 * CAR_SCALE);
-      // 방어막 중에 또 쓰면 남은 시간에 더함
-      shieldUntil = Math.max(shieldUntil, clock) + SHIELD_TIME;
       feedPush(`${info.icon} 방어막 사용 (${Math.ceil(shieldUntil - clock)}초)`, '#67e8f9');
     } else {
       const payload = { room: room.code, from: myId, to: targets.map((p) => p.id), kind: k };
@@ -1975,45 +2208,11 @@ const VERSION = '2026-10-28.57';
       feedPush(`${who} → ${to.length > 1 ? `모두(${to.length}명)` : (room.players.get(to[0]) || {}).name || '상대'}: ${info.icon} ${info.name}`, '#94a3b8');
       return;
     }
-    if (clock < shieldUntil) {
-      feedPush(`🛡️ ${who}의 ${info.icon} ${info.name} 막음`, '#67e8f9');
-      return;
-    }
-    if (kind === 'white' || kind === 'fog') {
-      // 이미 같은 효과 중이면 남은 시간에 ATTACK_TIME 을 더함
-      const until = kind === 'white' ? whiteUntil : fogUntil;
-      const stacked = clock < until;
-      const next = (stacked ? until : clock) + ATTACK_TIME;
-      if (kind === 'white') { if (!stacked) whiteFrom = clock; whiteUntil = next; }
-      else { if (!stacked) fogFrom = clock; fogUntil = next; }
-      feedPush(`${who} → 나: ${info.icon} ${info.name}${stacked ? ` 추가 (총 ${Math.ceil(next - clock)}초)` : ''}`, '#f87171');
-    } else {
-      // 라이벌은 받을 때마다 한 대씩 더 (앞 라이벌 뒤에 차례로 배치)
-      forceRival(kind === 'sky');
-      const n = obstacles.filter((o) => o.attack && !o.passed && !!o.sky === (kind === 'sky')).length;
-      feedPush(`${who} → 나: ${info.icon} ${info.name}${n > 1 ? ` x${n}` : ''}`, '#f87171');
-    }
-  }
-
-  // 공격으로 라이벌을 바로 등장시킴. 이미 오고 있는 차량을 다 지난 뒤에 오게 하고, 다음 차량도 그만큼 늦춰
-  // 피할 수 없는 배치는 만들지 않음 (점프 착지 여유 GAP 초)
-  function forceRival(sky) {
-    const GAP = 0.9;
-    // 각 차량이 내 차를 다 지나가는 시각(초 후)
-    const done = (o) => o.rival && !o.sky ? (o.x - o.jumpAt) / speed + ROLL_TIME + 0.3 : (o.x + o.w - player.x) / speed;
-    let t = 0;
-    for (const o of obstacles) if (!o.passed && !(o.rival && o.t >= 0)) t = Math.max(t, done(o));
-    const x = Math.max(W + 40, player.x + speed * (t + GAP));
-    const o = addRival(x);
-    o.attack = true;
-    if (sky) {
-      o.sky = true;
-      o.type = SKY_RIVAL;
-      o.landed = true; // 뛰지 않음
-    }
-    // 다음 일반 차량은 이 라이벌이 지나간 뒤에 오도록
-    spawnTimer = Math.max(spawnTimer, done(o) + GAP - (W + 40 - player.x) / speed);
-    burst = 0;
+    // 공격은 게임 결과에 영향을 주므로 입력으로 기록 (방어막으로 막은 것도 같은 순간에 서버가 판정)
+    const r = simInput('A', kind);
+    if (r.blocked) feedPush(`🛡️ ${who}의 ${info.icon} ${info.name} 막음`, '#67e8f9');
+    else if (kind === 'white' || kind === 'fog') feedPush(`${who} → 나: ${info.icon} ${info.name}${r.stacked ? ` 추가 (총 ${Math.ceil(r.left)}초)` : ''}`, '#f87171');
+    else feedPush(`${who} → 나: ${info.icon} ${info.name}${r.n > 1 ? ` x${r.n}` : ''}`, '#f87171');
   }
 
   // 공격 효과 투명도: 시작·끝에 짧게 페이드
@@ -2352,7 +2551,7 @@ const VERSION = '2026-10-28.57';
 
   // 달: 초승달 → 상현 → 보름달 → 하현 → 그믐달 순으로 천천히 변하고,
   // 삭(새달) 부근에서는 부드럽게 사라졌다가 다시 나타남
-  const MOON_CYCLE = 60; // 한 주기(초)
+  // 한 주기는 MOON_CYCLE (게임 규칙 블록)
   const craters = [[-0.3, -0.25, 0.18], [0.25, 0.1, 0.22], [-0.1, 0.4, 0.13], [0.35, -0.35, 0.1], [-0.45, 0.15, 0.09]];
 
   function drawMoon() {
@@ -2895,6 +3094,7 @@ const VERSION = '2026-10-28.57';
 
   // ---------- 라이벌 차량 (우리 차와 같은 모델, 왼쪽을 향해 달려옴) ----------
   // 판정용 크기: 차체 길이 약 106, 바퀴 아래~지붕 약 36 (모델 단위) × CAR_SCALE
+  // @sim-begin
   const RIVAL = { name: 'rival', w: Math.round(106 * CAR_SCALE), h: Math.round(36 * CAR_SCALE), hitTop: 0.25, points: 3 }; // 통과 시 '안전운전' 보너스 3점
   const SKY_RIVAL = { ...RIVAL, name: 'sky', points: 1 };
 
@@ -2927,6 +3127,7 @@ const VERSION = '2026-10-28.57';
       smoke(o.x + o.w / 2, groundY - 4, 18, o.w);
     }
   }
+  // @sim-end
 
   function drawRival(o) {
     const cx = o.x + o.w / 2;
@@ -3472,11 +3673,15 @@ const VERSION = '2026-10-28.57';
     if (countdownAt) drawCountdown(SW, SH);
   }
 
-  let last = performance.now();
+  let last = performance.now(), simAcc = 0;
   function loop(now) {
     const dt = Math.min(0.033, (now - last) / 1000);
     last = now;
-    if (!paused) update(dt);
+    if (!paused) {
+      simAcc += dt;
+      while (simAcc >= STEP) { simAcc -= STEP; simStep(); }
+      animate(dt);
+    }
     roomTick(now);
     botsTick(now);
     syncMpButton();

@@ -23,9 +23,10 @@ npm test
 | `build-test-copy.py` | 저장소의 `index.html` 로 테스트용 사본(`site/`)을 만듦. 게임 규칙은 그대로 두고 자동 플레이 봇·관찰용 훅만 덧붙이고, Supabase 대신 아래 가짜 서버를 쓰게 바꿈 |
 | `relay.js` | Supabase Realtime 을 흉내 낸 로컬 중계 서버 (채널 · Presence · Broadcast). 사용자마다 30~120ms 지연, 창을 그냥 닫으면 `GHOST_MS` 동안 접속 정보가 남음(유령). 메시지 통계를 `relay-stats.json` 에 기록 |
 | `fake-supabase-ws.js` | 게임이 쓰는 supabase-js Realtime API 만 구현한 클라이언트 (relay.js 에 WebSocket 으로 연결) |
-| `server.js` | 사본 정적 파일 + 랭킹 REST(`scores`, `submit_score`) 흉내 |
+| `server.js` | 사본 정적 파일 + 랭킹 조회(`scores`) 흉내 + 랭킹 등록 Edge Function. 등록은 실제 함수 코드(`supabase/functions/score/handler.js`)로 리플레이를 검증하고 DB 함수만 메모리로 흉내 |
 | `run.js` | 시나리오와 확인 항목 |
 | `run-all.js` | 위를 한 번에 실행 (`npm test`) |
+| `solo.js` | 혼자 하기 리플레이 검증: 화면 크기 · CPU 느림 · 일시정지 · 게임 중 화면 크기 변경 · 사람 확인(가짜 Turnstile)을 섞어 여러 판 → 모두 서버 검증 통과해야 함 (`node solo.js [초]`, server.js 를 켜 둔 상태) |
 | `tune-bot.js` | 봇 점프 타이밍 비교용 (server.js 를 켜 둔 상태에서 `node tune-bot.js 0.05,0.08,0.12 60000`) |
 
 ## 시나리오
@@ -42,7 +43,7 @@ npm test
 
 ## 확인 항목
 
-방 목록(제목·방장·모드·인원·게임 중), 가득 찬 방 거절, 참가자 목록 일치, 라운드·방마다 점수 동기화·최종 순위·다른 방과 간섭 없음·아이템전 공격·노템전 아이템 없음·랭킹 자동 등록, 중간 입장, 유령 처리, 방장 넘김, 자바스크립트 오류, 프레임(fps), 메시지량.
+방 목록(제목·방장·모드·인원·게임 중), 가득 찬 방 거절, 참가자 목록 일치, 라운드·방마다 점수 동기화·최종 순위·다른 방과 간섭 없음·아이템전 공격·노템전 아이템 없음·랭킹 자동 등록, 랭킹 리플레이 검증 거절 없음(아이템전 공격·아이템 사용 포함), 중간 입장, 유령 처리, 방장 넘김, 자바스크립트 오류, 프레임(fps), 메시지량.
 
 ## 한계
 

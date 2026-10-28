@@ -1,0 +1,12 @@
+{
+  "name": "car-jump-server-tests",
+  "private": true,
+  "type": "module",
+  "description": "랭킹 서버(anticheat.sql · Edge Function score) 테스트: PGlite(WebAssembly Postgres)로 실제 SQL 실행",
+  "scripts": {
+    "test": "node ../../supabase/build-sim.mjs --check && node sql.test.mjs && node handler.test.mjs && node deno-e2e.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.12"
+  }
+}
