@@ -30,7 +30,7 @@
     border: 1px solid rgba(148,197,255,0.4); border-radius: 14px;
     background: rgba(15,23,42,0.9); color: #f8fafc; font: 14px system-ui, sans-serif;
   }
-  #rank[hidden] { display: none; }
+  #rank[hidden], #rank.squeezed { display: none; }
   #rank-form { display: flex; gap: 8px; margin-bottom: 10px; }
   #rank-form[hidden] { display: none; } /* display:flex 가 hidden 속성을 덮어쓰지 않게 */
   #rank-form input {
@@ -175,7 +175,8 @@
   #mp .msg { min-height: 18px; margin: 4px 0 10px; color: #94a3b8; }
   #room {
     position: fixed; left: max(12px, env(safe-area-inset-left)); top: calc(var(--top, 0px) + max(60px, calc(env(safe-area-inset-top) + 48px)));
-    width: 200px; box-sizing: border-box; padding: 8px 10px; border: 1px solid rgba(148,197,255,0.3); border-radius: 12px;
+    width: 200px; box-sizing: border-box; padding: 8px 10px;
+    max-height: calc(100dvh - var(--top, 0px) - 72px); overflow-y: auto; /* 아주 낮은 가로 화면에서는 스크롤 */ border: 1px solid rgba(148,197,255,0.3); border-radius: 12px;
     background: rgba(15,23,42,0.75); color: #f8fafc; font: 13px system-ui, sans-serif;
   }
   #room.playing { pointer-events: none; background: rgba(15,23,42,0.45); } /* 게임 중에는 탭이 점프로 전달되게 */
@@ -253,7 +254,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.52';
+const VERSION = '2026-10-28.54';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1132,7 +1133,7 @@ const VERSION = '2026-10-28.52';
     if (!lobbyCh || !lobbyReady) return;
     if (room && room.host === myId) {
       const ps = [...room.players.values()];
-      const meta = { code: room.code, host: room.me.name, mode: room.mode, n: room.players.size, playing: ps.some((p) => p.status === 'playing') || !!countdownAt };
+      const meta = { code: room.code, host: room.me.name, mode: room.mode, n: room.players.size, playing: ps.some(running) || !!countdownAt }; // 창을 닫은 유령은 게임 중으로 치지 않음
       const k = JSON.stringify(meta);
       if (k !== lobbyMeta) { lobbyMeta = k; lobbyCh.track(meta); }
     } else if (lobbyMeta) {
@@ -1171,7 +1172,7 @@ const VERSION = '2026-10-28.52';
       const t = document.createElement('span'); t.className = 'title'; t.textContent = roomTitle(m.code);
       const h = document.createElement('span'); h.className = 'host'; h.textContent = `👑 ${m.host}${m.mode ? ` · ${modeLabel(m.mode)}` : ''}`;
       info.append(t, h);
-      const st = document.createElement('span'); st.className = 'state'; st.textContent = full ? '가득 참' : m.playing ? '게임 중' : '대기 중';
+      const st = document.createElement('span'); st.className = 'state'; st.textContent = m.playing ? '게임 중' : full ? '가득 참' : '대기 중'; // 가득 찬 방도 게임 중이면 게임 중으로
       const c = document.createElement('span'); c.className = 'count'; c.textContent = `${m.n}/${ROOM_MAX}`;
       b.append(info, st, c);
       b.addEventListener('click', () => joinRoom(m.code));
@@ -2891,7 +2892,8 @@ const VERSION = '2026-10-28.52';
   // 이번 판 방 안 순위 (같이 출발한 사람 중 점수 순, 같은 점수는 같은 등수)
   function roomRank() {
     if (!room) return null;
-    const ps = [...room.players.values()].filter((p) => p.status !== 'ready');
+    // 대기 중인 사람과, 달리는 중으로 남아 있지만 멈춘 사람(창을 닫은 유령 등)은 순위에서 뺌
+    const ps = [...room.players.values()].filter((p) => p.status === 'over' || running(p));
     if (!ps.some((p) => p.id === myId)) return null;
     return {
       rank: 1 + ps.filter((p) => p.id !== myId && p.score > score).length,
@@ -2965,22 +2967,27 @@ const VERSION = '2026-10-28.52';
     if (split) {
       x = Math.round(W * 0.27);
       y = Math.round(Math.max(72, H * 0.3));
-      let rankMaxH = H - 24;
+      let rankMaxH = H - 24, squeezed = false;
       if (roomBox) {
         const left = roomBox.right + 12, right = W - 16 - Math.min(320, W * 0.46);
         if (right - left >= 320) {
           x = Math.round(Math.max(x, (left + right) / 2));
           sideW = `${Math.round(Math.min(300, right - left - 8))}px`;
-        } else {
+        } else if (roomBox.bottom - topInset + 40 + extra + 30 <= H) {
           // 방 패널과 랭킹 패널 사이가 좁으면 문구를 두 패널 아래 가운데에 두고 랭킹 패널 높이를 그 위로 제한
           x = Math.round(W / 2);
-          y = Math.round(Math.min(H - 40 - extra, roomBox.bottom - topInset + 40));
+          y = Math.round(roomBox.bottom - topInset + 40);
           rankMaxH = Math.max(60, y - 52 - 12);
+        } else {
+          // 아래에도 자리가 없는 아주 작은 가로 화면: 전체 랭킹 패널은 숨기고 문구를 방 패널 오른쪽 가운데에
+          squeezed = true;
+          x = Math.round((left + W - 16) / 2);
         }
       }
-      key = `s${x},${y},${H},${rankEl.hidden},${extra},${sideW},${topInset},${rankMaxH}`;
+      key = `s${x},${y},${H},${rankEl.hidden},${extra},${sideW},${topInset},${rankMaxH},${squeezed}`;
       if (key !== overLayoutKey) {
         rankEl.classList.add('split');
+        rankEl.classList.toggle('squeezed', squeezed);
         if (rankForm.parentNode !== rankSide) rankSide.append(rankForm);
         rankEl.style.top = `${topInset + 12}px`;
         rankEl.style.maxHeight = `${rankMaxH}px`;
@@ -2994,7 +3001,7 @@ const VERSION = '2026-10-28.52';
       y = Math.round(Math.max(roomBox ? roomBox.bottom - topInset + 40 : 48, Math.min(H * 0.3, H - panelH - 70 - extra)));
       key = `n${y},${H},${rankEl.hidden},${extra},${topInset}`;
       if (key !== overLayoutKey) {
-        rankEl.classList.remove('split');
+        rankEl.classList.remove('split', 'squeezed');
         if (rankForm.parentNode !== rankEl) rankEl.prepend(rankForm);
         rankSide.hidden = true;
         rankEl.style.top = `${topInset + y + 58 + extra}px`;
