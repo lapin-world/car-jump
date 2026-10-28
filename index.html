@@ -232,7 +232,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.49';
+const VERSION = '2026-10-28.50';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1627,7 +1627,8 @@ const VERSION = '2026-10-28.49';
 
   // ---------- 아이템전 ----------
   // 점수가 ITEM_EVERY 점 오를 때마다 무작위 아이템 1개 (공격·방어 합쳐 최대 ITEM_MAX 개 보관, 꽉 차면 버림).
-  // 공격 아이템은 달리고 있는 상대 중 무작위 1명에게, 방어는 나에게만 적용
+  // 공격 아이템은 같은 방에서 달리고 있는 상대 모두에게, 방어는 나에게만 적용.
+  // 같은 공격이 겹치면(여러 명이 동시에 보내거나 효과 중에 또 받으면) 화이트아웃·안개는 시간이 늘고 라이벌은 대수가 늘어남
   const ITEM_EVERY = 50;
   const ITEM_MAX = 3;
   const ATTACK_TIME = 3;   // 화이트아웃·안개 지속 시간(초)
@@ -1642,6 +1643,7 @@ const VERSION = '2026-10-28.49';
   const ITEM_KINDS = Object.keys(ITEM_INFO);
   const itemsEl = document.getElementById('items');
   let items = [], nextItemAt = ITEM_EVERY, whiteUntil = 0, fogUntil = 0, shieldUntil = 0, itemsKey = '';
+  let whiteFrom = 0, fogFrom = 0; // 효과가 시작된 시각 (겹쳐서 늘어나도 시작 페이드는 한 번만)
 
   function itemMode() {
     return !!room && room.mode === 'item';
@@ -1650,7 +1652,7 @@ const VERSION = '2026-10-28.49';
   function resetItems() {
     items = [];
     nextItemAt = ITEM_EVERY;
-    whiteUntil = fogUntil = shieldUntil = 0;
+    whiteUntil = fogUntil = shieldUntil = whiteFrom = fogFrom = 0;
   }
 
   function itemTick() {
@@ -1668,29 +1670,29 @@ const VERSION = '2026-10-28.49';
     if (state !== 'playing' || paused || !itemMode() || !items[i]) return;
     const k = items[i];
     const info = ITEM_INFO[k];
-    let target = null;
+    let targets = [];
     if (k !== 'shield') {
-      // 지금 이 방에서 실제로 달리고 있는 상대만 (running: 접속 정보만 남은 사람·멈춘 사람 제외)
-      const alive = [...room.players.values()].filter((p) => p.id !== myId && running(p));
-      if (!alive.length) { popup('공격할 상대가 없어요', '#94a3b8'); return; } // 아이템은 그대로 둠
-      target = alive[Math.floor(Math.random() * alive.length)];
+      // 지금 이 방에서 실제로 달리고 있는 상대 모두 (running: 접속 정보만 남은 사람·멈춘 사람 제외)
+      targets = [...room.players.values()].filter((p) => p.id !== myId && running(p));
+      if (!targets.length) { popup('공격할 상대가 없어요', '#94a3b8'); return; } // 아이템은 그대로 둠
     }
     items.splice(i, 1);
     if (k === 'shield') {
       // 지금 받은 공격 제거: 화이트아웃·안개 끝내고, 아직 다가오는 공격 차량은 치움 (머리 위를 넘는 중인 라이벌은 그대로)
       whiteUntil = fogUntil = 0;
       obstacles = obstacles.filter((o) => !o.attack || o.passed || (o.rival && o.t >= 0 && !o.landed) || o.x < player.x + 60 * CAR_SCALE);
-      shieldUntil = clock + SHIELD_TIME;
-      popup(`${info.icon} 방어막 ${SHIELD_TIME}초!`, '#67e8f9');
+      // 방어막 중에 또 쓰면 남은 시간에 더함
+      shieldUntil = Math.max(shieldUntil, clock) + SHIELD_TIME;
+      popup(`${info.icon} 방어막 ${Math.ceil(shieldUntil - clock)}초!`, '#67e8f9');
     } else {
-      room.ch.send({ type: 'broadcast', event: 'attack', payload: { room: room.code, from: myId, to: target.id, kind: k } });
-      popup(`${info.icon} ${info.name} → ${target.name}`, '#a78bfa');
+      room.ch.send({ type: 'broadcast', event: 'attack', payload: { room: room.code, from: myId, to: targets.map((p) => p.id), kind: k } });
+      popup(`${info.icon} ${info.name} → ${targets.length > 1 ? `모두(${targets.length}명)` : targets[0].name}`, '#a78bfa');
     }
   }
 
   function receiveAttack({ room: code, from, to, kind }) {
     const info = ITEM_INFO[kind];
-    if (!info || kind === 'shield' || to !== myId || state !== 'playing' || !itemMode()) return;
+    if (!info || kind === 'shield' || !Array.isArray(to) || !to.includes(myId) || state !== 'playing' || !itemMode()) return;
     // 같은 방 사람이 보낸 공격만 받음
     if (code !== room.code || from === myId || !room.players.has(from)) return;
     const who = (room.players.get(from) || {}).name || '상대';
@@ -1698,10 +1700,20 @@ const VERSION = '2026-10-28.49';
       popup(`🛡️ ${who}의 ${info.name} 막음!`, '#67e8f9');
       return;
     }
-    popup(`${info.icon} ${who}의 ${info.name}!`, '#f87171');
-    if (kind === 'white') whiteUntil = clock + ATTACK_TIME;
-    else if (kind === 'fog') fogUntil = clock + ATTACK_TIME;
-    else forceRival(kind === 'sky');
+    if (kind === 'white' || kind === 'fog') {
+      // 이미 같은 효과 중이면 남은 시간에 ATTACK_TIME 을 더함
+      const until = kind === 'white' ? whiteUntil : fogUntil;
+      const stacked = clock < until;
+      const next = (stacked ? until : clock) + ATTACK_TIME;
+      if (kind === 'white') { if (!stacked) whiteFrom = clock; whiteUntil = next; }
+      else { if (!stacked) fogFrom = clock; fogUntil = next; }
+      popup(stacked ? `${info.icon} ${who}의 ${info.name} 추가! (${Math.ceil(next - clock)}초)` : `${info.icon} ${who}의 ${info.name}!`, '#f87171');
+    } else {
+      // 라이벌은 받을 때마다 한 대씩 더 (앞 라이벌 뒤에 차례로 배치)
+      forceRival(kind === 'sky');
+      const n = obstacles.filter((o) => o.attack && !o.passed && !!o.sky === (kind === 'sky')).length;
+      popup(n > 1 ? `${info.icon} ${who}의 ${info.name} x${n}!` : `${info.icon} ${who}의 ${info.name}!`, '#f87171');
+    }
   }
 
   // 공격으로 라이벌을 바로 등장시킴. 이미 오고 있는 차량을 다 지난 뒤에 오게 하고, 다음 차량도 그만큼 늦춰
@@ -1726,15 +1738,15 @@ const VERSION = '2026-10-28.49';
   }
 
   // 공격 효과 투명도: 시작·끝에 짧게 페이드
-  function effectAlpha(until) {
+  function effectAlpha(from, until) {
     const left = until - clock;
     if (left <= 0) return 0;
-    return Math.max(0, Math.min(1, left / 0.3, (ATTACK_TIME - left) / 0.2 + 0.2));
+    return Math.max(0, Math.min(1, left / 0.3, (clock - from) / 0.2 + 0.2));
   }
 
   // 화이트아웃: 배경(하늘·도로·터널)을 흰색으로 덮고 차량은 그 위에 그림
   function drawWhiteout() {
-    const a = effectAlpha(whiteUntil);
+    const a = effectAlpha(whiteFrom, whiteUntil);
     if (!a) return;
     ctx.fillStyle = `rgba(248,250,252,${0.97 * a})`;
     ctx.fillRect(0, 0, W, H);
@@ -1742,7 +1754,7 @@ const VERSION = '2026-10-28.49';
 
   // 안개: 내 차 앞쪽을 반투명하게 가림 (다가오는 차가 흐릿하게 보이는 정도)
   function drawFog() {
-    const a = effectAlpha(fogUntil);
+    const a = effectAlpha(fogFrom, fogUntil);
     if (!a) return;
     const x0 = player.x + 50 * CAR_SCALE;
     const grad = ctx.createLinearGradient(x0, 0, x0 + 200, 0);
