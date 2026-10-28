@@ -78,7 +78,11 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
     await sleep(4000);
     // 모두 끝날 때까지 (사람·컴퓨터)
     const t0 = Date.now();
+    for (const u of [A, A2, B, B2]) await u.page.evaluate(() => { window.__bot = true; });
+    let autoOff = false;
     for (;;) {
+      // 사람 자동 플레이는 90초 뒤 끄고 마무리 (컴퓨터는 사람이 모두 끝나면 스스로 빨리 끝남)
+      if (!autoOff && Date.now() - t0 > 90000) { autoOff = true; for (const u of [A, A2, B, B2]) await u.page.evaluate(() => { window.__bot = false; }); }
       const all = await Promise.all([A, A2, B, B2].map(dbg));
       if (all.every((d) => d.state === 'over') && all.every((d) => d.players.every((p) => p.status === 'over'))) break;
       if (Date.now() - t0 > 240000) { console.log('시간 초과'); break; }
