@@ -22,7 +22,7 @@
 <style>
   html, body { margin: 0; height: 100%; background: #020617; overflow: hidden; }
   body { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
-  canvas { display: block; width: 100vw; height: 100vh; }
+  canvas { display: block; width: 100vw; height: 100vh; } /* 실제 크기는 resize() 에서 보이는 화면(innerWidth/innerHeight)에 맞춤 */
   /* 게임 오버 시 랭킹 패널 */
   #rank {
     position: fixed; left: 50%; top: 40%; transform: translateX(-50%); overflow-y: auto; /* top·max-height 는 JS(layoutOver)에서 문구 아래로 맞춤 */
@@ -202,7 +202,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.44';
+const VERSION = '2026-10-28.45';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -326,6 +326,10 @@ const VERSION = '2026-10-28.44';
     SH = window.innerHeight - topInset;
     canvas.width = SW * dpr;
     canvas.height = window.innerHeight * dpr;
+    // iOS Safari 의 100vh 는 주소창·하단 막대가 숨었을 때 높이라 보이는 화면보다 큼 → 캔버스가 세로로 늘어나
+    // 캔버스 글자와 HTML 패널(랭킹·방) 위치가 어긋남. 보이는 화면 크기로 직접 맞춤
+    canvas.style.width = `${SW}px`;
+    canvas.style.height = `${window.innerHeight}px`;
     viewScale = Math.min(1, SW / VIEW_MIN_W, SH / VIEW_MIN_H);
     W = SW / viewScale;
     H = SH / viewScale;
