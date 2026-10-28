@@ -23,14 +23,14 @@ rep("  function loop(now) {\n", "  function loop(now) {\n    window.__frames = (
 rep("    const who = room.players.get(from).name;",
     "    const who = room.players.get(from).name;\n    (window.__hits = window.__hits || []).push({ from: who, room: code, myRoom: room.code, kind, target: to.includes(myId) });")
 # 봇 + 관찰 함수
-rep("  let last = performance.now(), simAcc = 0;\n", r"""  let botHold = 0, botItemAt = 0;
-  function botStep() {
+rep("  let last = performance.now(), simAcc = 0;\n", r"""  let autoHold = 0, autoItemAt = 0;
+  function autoPlayStep() {
     const p = player;
     if (p.mode === 'ceiling' || p.mode === 'toCeiling') { if (clock - p.lastTap > 0.12) simInput('T'); return; }
     if (p.mode) return;
     if (inTunnel()) { simInput('T'); return; }
-    if (itemMode() && items.length && clock > botItemAt) { botItemAt = clock + 1 + Math.random() * 4; useItem(0); }
-    if (!p.onGround) { simInput(botHold > clock ? 'H' : 'R'); return; }
+    if (itemMode() && items.length && clock > autoItemAt) { autoItemAt = clock + 1 + Math.random() * 4; useItem(0); }
+    if (!p.onGround) { simInput(autoHold > clock ? 'H' : 'R'); return; }
     simInput('R');
     const ahead = obstacles.filter((o) => !o.passed && o.x + o.w > p.x - 40);
     // 머리 위로 넘어올 민트 라이벌이 가까우면 점프하지 않음
@@ -41,8 +41,8 @@ rep("  let last = performance.now(), simAcc = 0;\n", r"""  let botHold = 0, botI
     const dist = next.x - (p.x + 44 * CAR_SCALE);
     if (dist < speed * window.__botLead) {
       const group = cars.filter((o) => o.x < next.x + 520);
-      botHold = group.length > 1 ? clock + HOLD_MAX : 0;
-      simInput(botHold > clock ? 'H' : 'R');
+      autoHold = group.length > 1 ? clock + HOLD_MAX : 0;
+      simInput(autoHold > clock ? 'H' : 'R');
       simInput('T');
     }
   }
@@ -59,7 +59,7 @@ rep("  let last = performance.now(), simAcc = 0;\n", r"""  let botHold = 0, botI
 """)
 # 봇은 게임 규칙 스텝마다 입력 (사람처럼 simInput 으로 → 리플레이에 기록되어 서버 검증을 거침)
 rep("      while (simAcc >= STEP) { simAcc -= STEP; simStep(); }",
-    "      while (simAcc >= STEP) { simAcc -= STEP; if (window.__bot && state === 'playing') botStep(); simStep(); }")
+    "      while (simAcc >= STEP) { simAcc -= STEP; if (window.__bot && state === 'playing') autoPlayStep(); simStep(); }")
 # 실제 supabase-js 대신 로컬 중계 서버용 가짜 클라이언트
 rep("const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.99.3/dist/umd/supabase.js';",
     "const SUPABASE_JS = 'fake-supabase-ws.js';")

@@ -189,6 +189,13 @@
   #room li.me .name { color: #38bdf8; }
   #room li.over { opacity: 0.55; }
   #room .btns { display: flex; gap: 6px; margin-top: 8px; }
+  /* 컴퓨터 추가 (방장만) */
+  #room .botrow { display: flex; gap: 6px; margin-top: 6px; }
+  #room .botrow select {
+    flex: 0 0 auto; padding: 4px; border: 1px solid #475569; border-radius: 8px; background: #0f172a; color: #f8fafc; font: 13px system-ui, sans-serif;
+  }
+  #room .botrow button { flex: 1; padding: 6px 4px; font-size: 13px; white-space: nowrap; }
+  #room li .kick { padding: 0 6px; border: 0; background: transparent; color: #94a3b8; font: 13px system-ui, sans-serif; }
   #room .btns button { flex: 1; padding: 6px 4px; font-size: 13px; white-space: nowrap; }
   #room .msg { margin: 6px 0 0; color: #94a3b8; font-size: 12px; }
 </style>
@@ -251,11 +258,19 @@
     <button id="room-copy" class="sub" type="button">초대</button>
     <button id="room-leave" class="sub" type="button">나가기</button>
   </div>
+  <div class="botrow" id="room-botrow" hidden>
+    <select id="room-bot-level" aria-label="컴퓨터 난이도">
+      <option value="easy">쉬움</option>
+      <option value="normal" selected>보통</option>
+      <option value="hard">어려움</option>
+    </select>
+    <button id="room-bot-add" class="sub" type="button">🤖 컴퓨터 추가</button>
+  </div>
   <p class="msg" id="room-msg"></p>
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.55';
+const VERSION = '2026-10-28.56';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -514,6 +529,7 @@ const VERSION = '2026-10-28.55';
     game = takeSession();
     simStart(game.seed, itemMode());
     pauseBtn.hidden = false;
+    botsStart();
     roomStatus();
   }
 
@@ -1454,11 +1470,11 @@ const VERSION = '2026-10-28.55';
       return;
     }
     const ch = await freshChannel(`car-jump-room-${code}`, { config: { presence: { key: myId }, broadcast: { self: false } } });
-    const r = { code, ch, players: new Map(), host: null, mode, me: { name, joined: Date.now() } };
+    const r = { code, ch, players: new Map(), bots: new Map(), host: null, mode, me: { name, joined: Date.now() } };
     ch.on('presence', { event: 'sync' }, () => onPresence(r))
       .on('broadcast', { event: 'start' }, () => { if (room === r) startCountdown(); })
       .on('broadcast', { event: 'frame' }, ({ payload }) => { if (room === r) { mergePlayer(payload); renderRoom(); } })
-      .on('broadcast', { event: 'attack' }, ({ payload }) => { if (room === r) receiveAttack(payload); })
+      .on('broadcast', { event: 'attack' }, ({ payload }) => { if (room === r) { receiveAttack(payload); botsReceive(payload); } })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           if (room && room !== r) return;
@@ -1492,6 +1508,7 @@ const VERSION = '2026-10-28.55';
       return [p.id, { ...p, frame: old.frame, frameAt: old.frameAt, syncAt: p.t !== old.t ? now : old.syncAt, ...(old.t > p.t ? { score: old.score, status: old.status, t: old.t } : {}) }];
     }));
     r.host = list[0] && list[0].id;
+    addBotsFromHost(r, list, prev);
     // 방 모드는 방을 만든 사람에게서 시작해 모두가 자기 정보에 함께 올려 둠 (방장이 나가도 유지)
     if (!r.mode) r.mode = (list.find((p) => p.mode) || {}).mode;
     const mine = list.find((p) => p.id === myId);
@@ -1500,7 +1517,9 @@ const VERSION = '2026-10-28.55';
   }
 
   function trackMe() {
-    return room.ch.track({ name: room.me.name, joined: room.me.joined, mode: room.mode, ...myStatus() });
+    // 방장은 자기가 돌리는 컴퓨터 상대 목록도 함께 올림 (방장이 나가면 컴퓨터도 같이 사라짐)
+    const bots = room.host === myId ? [...room.bots.values()].map((b) => ({ id: b.id, name: b.name, level: b.level, status: b.status, score: b.sim ? b.sim.score : 0 })) : [];
+    return room.ch.track({ name: room.me.name, joined: room.me.joined, mode: room.mode, bots, ...myStatus() });
   }
 
   function leaveRoom() {
@@ -1773,12 +1792,19 @@ const VERSION = '2026-10-28.55';
       if (p.id === myId) li.classList.add('me');
       if (p.status === 'over') li.classList.add('over');
       const n = document.createElement('span'); n.className = 'name';
-      n.textContent = `${p.id === room.host ? '👑 ' : ''}${p.name}${p.status === 'over' ? ' 💥' : p.status === 'playing' ? ' 🚕' : ''}`;
+      const label = p.bot ? `🤖 ${p.name} · ${BOT_LEVELS[p.level] ? BOT_LEVELS[p.level].label : ''}` : p.name;
+      n.textContent = `${p.id === room.host ? '👑 ' : ''}${label}${p.status === 'over' ? ' 💥' : p.status === 'playing' ? ' 🚕' : ''}`;
       const v = document.createElement('span'); v.className = 'score'; v.textContent = p.status === 'ready' ? '대기' : p.score;
       li.append(n, v);
+      if (p.bot && host && !playing && ![...room.players.values()].some(running)) {
+        const x = document.createElement('button'); x.type = 'button'; x.className = 'kick'; x.textContent = '✕'; x.setAttribute('aria-label', `${p.name} 빼기`);
+        x.addEventListener('click', () => removeBot(p.id));
+        li.append(x);
+      }
       return li;
     }));
     document.getElementById('room-btns').hidden = !!playing;
+    document.getElementById('room-botrow').hidden = !host || !!playing || room.players.size >= ROOM_MAX || [...room.players.values()].some(running);
     roomStart.hidden = !host;
     roomStart.disabled = !canStart();
     roomMsg.textContent = msg;
@@ -1976,7 +2002,9 @@ const VERSION = '2026-10-28.55';
     if (k === 'shield') {
       feedPush(`${info.icon} 방어막 사용 (${Math.ceil(shieldUntil - clock)}초)`, '#67e8f9');
     } else {
-      room.ch.send({ type: 'broadcast', event: 'attack', payload: { room: room.code, from: myId, to: targets.map((p) => p.id), kind: k } });
+      const payload = { room: room.code, from: myId, to: targets.map((p) => p.id), kind: k };
+      room.ch.send({ type: 'broadcast', event: 'attack', payload });
+      botsReceive(payload); // 내가 돌리는 컴퓨터 상대는 브로드캐스트를 받지 못하므로 직접 전달
       feedPush(`나 → ${targets.length > 1 ? `모두(${targets.length}명)` : targets[0].name}: ${info.icon} ${info.name}`, '#a78bfa');
     }
   }
@@ -2071,6 +2099,232 @@ const VERSION = '2026-10-28.55';
     itemsEl.replaceChildren(...slots, info);
   }
   itemsEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+  // ---------- 컴퓨터 상대 ----------
+  // 방장 브라우저가 컴퓨터마다 간단한 게임을 따로 돌리고(차량 생성·점프·충돌·점수·아이템),
+  // 사람과 똑같이 게임 화면 상태를 보내서 다른 사람에게는 상대 한 명으로 보임.
+  // 컴퓨터 목록은 방장의 접속 정보에 함께 올라가므로 방장이 나가면 컴퓨터도 같이 사라짐.
+  // 난이도 = 차량마다 실수할 확률 (화이트아웃·안개 중에는 4배, 사람이 모두 끝나면 10배로 빨리 마무리)
+  const BOT_LEVELS = {
+    easy: { label: '쉬움', fail: 0.06 },
+    normal: { label: '보통', fail: 0.025 },
+    hard: { label: '어려움', fail: 0.008 },
+  };
+  const BOT_LEAD = 0.08;    // 차량 앞 이 시간(초)만큼 거리에서 점프
+  const BOT_SPAWN_X = 900;  // 차량 등장 위치 (컴퓨터 차 기준)
+
+  // 방장의 접속 정보에 있는 컴퓨터를 참가자 목록에 넣음 (사람 + 컴퓨터 최대 ROOM_MAX)
+  function addBotsFromHost(r, list, prev) {
+    const hostMeta = list[0] || {};
+    let bots = Array.isArray(hostMeta.bots) ? hostMeta.bots : [];
+    const humans = Math.min(list.length, ROOM_MAX);
+    if (bots.length > ROOM_MAX - humans) {
+      // 사람이 들어와 자리가 모자라면 방장이 컴퓨터를 뒤에서부터 뺌
+      bots = bots.slice(0, ROOM_MAX - humans);
+      if (room === r && r.host === myId) {
+        for (const id of [...r.bots.keys()]) if (!bots.some((b) => b.id === id)) r.bots.delete(id);
+        trackMe();
+      }
+    }
+    const now = performance.now();
+    for (const b of bots) {
+      const old = prev.get(b.id);
+      r.players.set(b.id, old
+        ? { ...old, name: b.name, level: b.level, bot: true }
+        : { id: b.id, name: b.name, level: b.level, bot: true, status: b.status, score: b.score, t: 0, syncAt: now });
+    }
+  }
+
+  function addBot() {
+    if (!room || room.host !== myId || room.players.size >= ROOM_MAX) return;
+    const used = new Set([...room.players.values()].filter((p) => p.bot).map((p) => p.name));
+    let k = 1;
+    while (used.has(`컴퓨터${k}`)) k++;
+    const id = `bot-${myId}-${Date.now().toString(36)}`;
+    room.bots.set(id, { id, name: `컴퓨터${k}`, level: document.getElementById('room-bot-level').value, status: 'ready', sim: null, t: 0, sentAt: 0 });
+    trackMe();
+  }
+
+  function removeBot(id) {
+    if (!room || room.host !== myId) return;
+    room.bots.delete(id);
+    room.players.delete(id);
+    trackMe();
+    roomRenderKey = '';
+    renderRoom();
+  }
+
+  function botsStart() {
+    if (!room || room.host !== myId) return;
+    for (const b of room.bots.values()) {
+      b.sim = {
+        time: 0, last: performance.now(), d: 0, s: START_SPEED, y: 0, vy: 0, air: 0, ground: true, roll: 0, hold: 0,
+        score: 0, obs: [], spawn: 1.2, items: [], nextItem: ITEM_EVERY, itemAt: 0, white: 0, fog: 0, shield: 0,
+      };
+      b.status = 'playing';
+      b.sentAt = 0;
+    }
+  }
+
+  // 방장 화면에서 매 프레임 호출
+  function botsTick(now) {
+    if (!room || room.host !== myId || !room.bots.size) return;
+    const humansRunning = [...room.players.values()].some((p) => !p.bot && running(p));
+    for (const b of room.bots.values()) {
+      if (b.status !== 'playing' || !b.sim) continue;
+      const m = b.sim;
+      let left = Math.min(0.5, (now - m.last) / 1000); // 탭이 잠깐 멈춰도 따라잡음
+      m.last = now;
+      while (left > 0 && b.status === 'playing') { const dt = Math.min(1 / 60, left); left -= dt; botStep(b, dt, !humansRunning); }
+      if (b.status !== 'playing') { botSend(b); trackMe(); continue; }
+      if (now - b.sentAt >= FRAME_SEND * 1000) botSend(b);
+    }
+  }
+
+  function botSend(b) {
+    b.sentAt = performance.now();
+    const m = b.sim;
+    const r1 = (v) => Math.round(v), r2 = (v) => Math.round(v * 100) / 100;
+    const payload = {
+      id: b.id, score: m.score, status: b.status, t: ++b.t,
+      f: {
+        d: r1(m.d), s: r1(m.s), p: [r1(m.y), r1(m.vy), r2(m.roll), r2(m.air), m.ground ? 1 : 0, ''],
+        o: m.obs.filter((o) => o.x < 1800).map((o) => o.rival ? [o.sky ? -2 : -1, r1(o.x), r1(o.jump), r1(o.land), r2(o.t), o.landed ? 1 : 0] : [o.ti, r1(o.x)]),
+        tn: 0, fx: (m.time < m.white ? 1 : 0) | (m.time < m.fog ? 2 : 0) | (m.time < m.shield ? 4 : 0),
+      },
+    };
+    room.ch.send({ type: 'broadcast', event: 'frame', payload });
+    mergePlayer(payload);
+    renderRoom();
+  }
+
+  function botStep(b, dt, endgame) {
+    const m = b.sim;
+    const lvl = BOT_LEVELS[b.level] || BOT_LEVELS.normal;
+    m.time += dt;
+    m.s = Math.min(MAX_SPEED, m.s + SPEED_GAIN * dt);
+    m.d += m.s * dt;
+    // 차량 이동 (민트 라이벌은 컴퓨터 차 위를 배럴롤로 넘어감)
+    for (const o of m.obs) {
+      if (o.rival && !o.sky && !o.landed && o.t >= 0) {
+        o.t += dt;
+        const p = Math.min(1, o.t / ROLL_TIME);
+        o.x = o.jump + (o.land - o.jump) * p;
+        o.hop = 4 * OVER_HOP * p * (1 - p);
+        o.roll = Math.PI * 2 * (p - Math.sin(2 * Math.PI * p) / (2 * Math.PI));
+        if (p >= 1) { o.landed = true; o.hop = 0; }
+      } else {
+        o.x -= m.s * dt;
+        if (o.rival && !o.sky && !o.landed && o.t < 0 && o.x <= o.jump) o.t = 0;
+      }
+      const behind = o.rival ? o.x + o.w * 0.92 < -44 * CAR_SCALE : o.x + o.w < -45;
+      if (!o.passed && behind) { o.passed = true; m.score += o.pts; }
+    }
+    m.obs = m.obs.filter((o) => o.x + o.w > -600);
+    // 차량 생성 (게임과 같은 간격 규칙의 단순한 버전, 2~3대 묶음 포함)
+    m.spawn -= dt;
+    if (m.spawn <= 0) {
+      const r = Math.random();
+      const count = m.s >= 650 && r < 0.15 ? 3 : m.s >= 450 && r < 0.4 ? 2 : 1;
+      let x = BOT_SPAWN_X;
+      for (let i = 0; i < count; i++) {
+        const ti = Math.floor(Math.random() * OBSTACLE_TYPES.length), t = OBSTACLE_TYPES[ti];
+        m.obs.push({ ti, x, w: t.w, h: t.h, hitTop: t.hitTop, pts: t.points });
+        x += t.w + 30;
+      }
+      const extra = count === 1 ? 0 : m.s >= MAX_SPEED ? GROUP_PAD : (x - 30 - BOT_SPAWN_X) / m.s + 0.45;
+      m.spawn = 0.85 + 120 / m.s + extra + Math.random() * 1.1;
+    }
+    // 점프 판단: 다음 차량마다 한 번, 난이도 확률로 실수
+    if (m.ground) {
+      const ahead = m.obs.filter((o) => !o.passed && o.x + o.w > -44 * CAR_SCALE);
+      const mintNear = ahead.some((o) => o.rival && !o.sky && !o.landed && (o.t >= 0 || o.x - o.jump < m.s * 0.9));
+      const cars = ahead.filter((o) => !o.rival || o.sky || o.landed).sort((a, c) => a.x - c.x);
+      const next = cars[0];
+      if (next && !next.decided && next.x - 44 * CAR_SCALE < m.s * BOT_LEAD) {
+        next.decided = true;
+        const fail = lvl.fail * (m.time < m.white || m.time < m.fog ? 4 : 1) * (endgame ? 10 : 1);
+        if (Math.random() >= fail && !mintNear) {
+          m.hold = cars.filter((o) => o.x < next.x + 520).length > 1 ? m.time + HOLD_MAX : 0;
+          m.vy = JUMP_VELOCITY;
+          m.ground = false;
+          m.air = 0;
+        }
+      }
+    }
+    if (!m.ground) {
+      m.air += dt;
+      const boost = m.time < m.hold && m.vy > 0 && m.air < HOLD_MAX;
+      m.vy -= GRAVITY * (boost ? HOLD_GRAVITY : 1) * dt;
+      m.y += m.vy * dt;
+      const p = Math.min(1, m.air / airDuration());
+      m.roll = Math.PI * 2 * ROLLS_PER_JUMP * (p - Math.sin(2 * Math.PI * p) / (2 * Math.PI));
+      if (m.y <= 0) { m.y = 0; m.vy = 0; m.roll = 0; m.ground = true; }
+    }
+    // 충돌 (게임과 같은 판정 상자)
+    const half = 44 * CAR_SCALE;
+    for (const o of m.obs) {
+      if (half <= o.x + o.w * 0.08 || -half >= o.x + o.w * 0.92) continue;
+      const crash = o.rival && !o.sky && o.hop > 0
+        ? m.y + PLAYER_H > o.hop && m.y < o.hop + o.h * (1 - o.hitTop)
+        : m.y < o.h * (1 - o.hitTop);
+      if (crash) { b.status = 'over'; return; }
+    }
+    // 아이템전: 50점마다 아이템, 몇 초 뒤 사용
+    if (itemMode()) {
+      while (m.score >= m.nextItem) {
+        m.nextItem += ITEM_EVERY;
+        if (m.items.length < ITEM_MAX) { m.items.push(ITEM_KINDS[Math.floor(Math.random() * ITEM_KINDS.length)]); m.itemAt = m.time + 2 + Math.random() * 4; }
+      }
+      if (m.items.length && m.time >= m.itemAt) { botUseItem(b, m.items.shift()); m.itemAt = m.time + 2 + Math.random() * 4; }
+    }
+  }
+
+  function botUseItem(b, k) {
+    const m = b.sim;
+    if (k === 'shield') {
+      m.white = m.fog = 0;
+      m.obs = m.obs.filter((o) => !o.attack || o.passed || (o.rival && o.t >= 0) || o.x < 60 * CAR_SCALE);
+      m.shield = Math.max(m.shield, m.time) + SHIELD_TIME;
+      return;
+    }
+    const targets = [...room.players.values()].filter((p) => p.id !== b.id && running(p));
+    if (!targets.length) { m.items.unshift(k); return; }
+    const payload = { room: room.code, from: b.id, to: targets.map((p) => p.id), kind: k };
+    room.ch.send({ type: 'broadcast', event: 'attack', payload });
+    receiveAttack(payload); // 방장 자신
+    botsReceive(payload);   // 방장이 돌리는 다른 컴퓨터
+  }
+
+  // 방장이 돌리는 컴퓨터가 공격을 받음
+  function botsReceive({ room: code, from, to, kind }) {
+    if (!room || room.host !== myId || code !== room.code || !Array.isArray(to) || !ITEM_INFO[kind] || kind === 'shield') return;
+    for (const b of room.bots.values()) {
+      if (b.id === from || !to.includes(b.id) || b.status !== 'playing' || !b.sim) continue;
+      const m = b.sim;
+      if (m.time < m.shield) continue;
+      if (kind === 'white') m.white = Math.max(m.white, m.time) + ATTACK_TIME;
+      else if (kind === 'fog') m.fog = Math.max(m.fog, m.time) + ATTACK_TIME;
+      else botForceRival(m, kind === 'sky');
+    }
+  }
+
+  // forceRival 과 같은 규칙: 이미 오는 차량을 다 지난 뒤에 배치하고 다음 차량도 늦춤
+  function botForceRival(m, sky) {
+    const GAP = 0.9;
+    const jump = OVER_SPAN / 2 - RIVAL.w / 2, land = -OVER_SPAN / 2 - RIVAL.w / 2;
+    const done = (o) => o.rival && !o.sky ? (o.x - o.jump) / m.s + ROLL_TIME + 0.3 : (o.x + o.w) / m.s;
+    let t = 0;
+    for (const o of m.obs) if (!o.passed && !(o.rival && o.t >= 0)) t = Math.max(t, done(o));
+    const o = {
+      rival: true, sky, attack: true, x: Math.max(BOT_SPAWN_X, m.s * (t + GAP)), w: RIVAL.w, h: RIVAL.h, hitTop: RIVAL.hitTop,
+      pts: sky ? SKY_RIVAL.points : RIVAL.points, jump, land, t: -1, landed: sky, hop: 0, roll: 0,
+    };
+    m.obs.push(o);
+    m.spawn = Math.max(m.spawn, done(o) + GAP - BOT_SPAWN_X / m.s);
+  }
+
+  document.getElementById('room-bot-add').addEventListener('click', (e) => { e.currentTarget.blur(); addBot(); });
 
   function modeLabel(mode) {
     return mode === 'item' ? '🎁 아이템전' : mode === 'normal' ? '🚕 노템전' : '';
@@ -3240,6 +3494,7 @@ const VERSION = '2026-10-28.55';
       animate(dt);
     }
     roomTick(now);
+    botsTick(now);
     syncMpButton();
     renderItems();
     renderFeed();
