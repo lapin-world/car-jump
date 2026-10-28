@@ -82,7 +82,18 @@
     padding: 8px 12px; border: 1px solid rgba(251,191,36,0.6); border-radius: 10px;
     background: rgba(15,23,42,0.75); color: #fbbf24; font: 600 14px system-ui, sans-serif;
   }
-  #mp-open[hidden], #mp[hidden], #room[hidden] { display: none; }
+  #mp-open[hidden], #mp[hidden], #room[hidden], #mode[hidden], #mp [hidden] { display: none; }
+  /* 시작 화면 모드 선택: 제목 아래 (시작 화면 문구 y = 화면 높이 30% + 84 자리) */
+  #mode {
+    position: fixed; left: 50%; top: calc(30% + 58px); transform: translateX(-50%);
+    display: flex; gap: 10px; width: min(320px, calc(100vw - 32px));
+  }
+  #mode button {
+    flex: 1; padding: 12px 8px; border-radius: 12px; font: 700 16px system-ui, sans-serif;
+    border: 1px solid rgba(251,191,36,0.7); background: rgba(15,23,42,0.8); color: #fbbf24;
+  }
+  #mode button.solo { background: #fbbf24; color: #111827; }
+  #mp .who { display: flex; justify-content: space-between; align-items: center; margin: 0 0 10px; color: #cbd5e1; }
   #room [hidden] { display: none !important; } /* .btns 의 display:flex 보다 우선 */
   #mp {
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -135,14 +146,25 @@
 <div id="rank-side" hidden></div>
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <button id="mp-open" type="button" hidden>👥 같이 하기</button>
+<div id="mode" hidden>
+  <button id="mode-solo" class="solo" type="button">🚕 혼자 하기</button>
+  <button id="mode-multi" type="button">👥 같이 하기</button>
+</div>
 <div id="mp" hidden>
   <div class="box">
     <h2>같이 하기 (최대 4명)</h2>
-    <div class="row"><input id="mp-name" maxlength="12" placeholder="내 이름 (최대 12자)" autocomplete="off"></div>
-    <div class="row"><button id="mp-create" type="button" style="flex:1">방 만들기</button></div>
-    <div class="row">
-      <input id="mp-code" maxlength="4" placeholder="방 코드 4자리" autocomplete="off" autocapitalize="characters">
-      <button id="mp-join" type="button">참여</button>
+    <!-- 1단계: 이름 입력 → 2단계: 방 만들기 / 코드로 참여 (초대 링크면 이름 입력 후 바로 참여) -->
+    <div id="mp-step1">
+      <div class="row"><input id="mp-name" maxlength="12" placeholder="내 이름 (최대 12자, 랭킹에도 사용)" autocomplete="off"></div>
+      <div class="row"><button id="mp-next" type="button" style="flex:1">다음</button></div>
+    </div>
+    <div id="mp-step2" hidden>
+      <p class="who"><span>이름: <b id="mp-who"></b></span><button id="mp-rename" class="sub" type="button">변경</button></p>
+      <div class="row"><button id="mp-create" type="button" style="flex:1">방 만들기</button></div>
+      <div class="row">
+        <input id="mp-code" maxlength="4" placeholder="방 코드 4자리" autocomplete="off" autocapitalize="characters">
+        <button id="mp-join" type="button">참여</button>
+      </div>
     </div>
     <p class="msg" id="mp-msg"></p>
     <div class="row"><button id="mp-close" class="sub" type="button" style="flex:1">닫기</button></div>
@@ -160,7 +182,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.42';
+const VERSION = '2026-10-28.43';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -389,7 +411,12 @@ const VERSION = '2026-10-28.42';
   window.addEventListener('keyup', (e) => {
     if (e.key === 'Enter' || e.key === ' ') holding = false;
   });
-  canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); holding = true; handleInput(); });
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    holding = true;
+    if (!modeEl.hidden) return; // 시작 화면에서는 혼자 하기 / 같이 하기 버튼으로 선택 (키보드 Enter/Space 는 혼자 하기)
+    handleInput();
+  });
   window.addEventListener('pointerup', () => { holding = false; });
   window.addEventListener('pointercancel', () => { holding = false; });
   window.addEventListener('blur', () => { holding = false; setPaused(true); });
@@ -875,10 +902,17 @@ const VERSION = '2026-10-28.42';
 
   function showRanking() {
     submittedScore = false;
-    rankForm.hidden = !canSubmit(score);
     rankForm.querySelector('button').disabled = false;
     try { rankName.value = localStorage.getItem('roadster-name') || ''; } catch {}
     rankEl.hidden = false;
+    if (room) {
+      // 같이 하기: 방에 들어올 때 입력한 이름으로 바로 랭킹 등록
+      rankForm.hidden = true;
+      if (canSubmit(score)) submitRank(room.me.name, true);
+      else loadRanking();
+      return;
+    }
+    rankForm.hidden = !canSubmit(score);
     loadRanking();
   }
 
@@ -889,10 +923,14 @@ const VERSION = '2026-10-28.42';
     rankName.blur();
   }
 
-  rankForm.addEventListener('submit', async (e) => {
+  rankForm.addEventListener('submit', (e) => {
     e.preventDefault();
     // 이름은 12자까지지만, 랭킹 초기화 문구(DB 에서만 판별)를 위해 입력은 20자까지 받아 그대로 전달
-    const name = rankName.value.trim().slice(0, 20);
+    submitRank(rankName.value.trim().slice(0, 20));
+  });
+
+  // auto: 같이 하기에서 자동 등록 (실패해도 입력 폼 없이 안내만)
+  async function submitRank(name, auto = false) {
     if (!name || submittedScore || !canSubmit(score)) return;
     submittedScore = true;
     rankForm.querySelector('button').disabled = true;
@@ -910,12 +948,14 @@ const VERSION = '2026-10-28.42';
       }
       try { localStorage.setItem('roadster-name', name); } catch {}
       await loadRanking();
+      if (auto) rankMsg.textContent = `'${name}' 이름으로 랭킹에 등록했어요${rankMsg.textContent === 'TOP 10' ? ' · TOP 10' : ''}`;
     } catch {
       submittedScore = false;
       rankForm.querySelector('button').disabled = false;
+      if (auto) { rankMsg.textContent = '랭킹 등록에 실패했어요'; return; }
       rankMsg.textContent = name.length > 12 ? '이름은 12자까지 쓸 수 있어요' : '등록에 실패했어요. 다시 시도해 주세요';
     }
-  });
+  }
 
   // ---------- 같이 하기 (멀티플레이, Supabase Realtime) ----------
   // 방 코드 = Realtime 채널 이름. 접속자 목록은 Presence, 시작 신호·게임 화면 상태는 Broadcast 로 주고받음.
@@ -954,13 +994,38 @@ const VERSION = '2026-10-28.42';
     });
   }
 
+  // 같이 하기 창: 항상 이름 입력(1단계)부터. code 가 있으면(초대 링크) 이름 입력 후 바로 그 방에 참여
+  let pendingCode = '';
   function openMp(code = '') {
     try { mpName.value = mpName.value || localStorage.getItem('roadster-name') || ''; } catch {}
+    pendingCode = code;
     mpCode.value = code;
-    mpMsg.textContent = '';
+    mpMsg.textContent = code ? `방 ${code} 에 참여해요. 이름을 입력해 주세요` : '';
+    mpStep(1);
     mpDialog.hidden = false;
     holding = false;
-    (mpName.value ? (code ? document.getElementById('mp-join') : mpCode) : mpName).focus();
+    mpName.focus();
+  }
+
+  function mpStep(n) {
+    document.getElementById('mp-step1').hidden = n !== 1;
+    document.getElementById('mp-step2').hidden = n !== 2;
+    for (const b of mpDialog.querySelectorAll('button')) b.disabled = false;
+  }
+
+  function mpNext() {
+    const name = mpName.value.trim().slice(0, 12);
+    if (!name) { mpMsg.textContent = '이름을 입력해 주세요'; mpName.focus(); return; }
+    try { localStorage.setItem('roadster-name', name); } catch {}
+    document.getElementById('mp-who').textContent = name;
+    mpStep(2);
+    mpMsg.textContent = '';
+    if (pendingCode) {
+      pendingCode = '';
+      joinRoom(mpCode.value);
+    } else {
+      mpCode.focus();
+    }
   }
 
   function closeMp() {
@@ -1303,14 +1368,23 @@ const VERSION = '2026-10-28.42';
     roomMsg.hidden = !msg;
   }
 
-  // 시작 화면·게임 오버 화면에서만 '같이 하기' 버튼 표시
+  // 시작 화면: 혼자 하기 / 같이 하기 선택. 혼자 한 판 끝난 게임 오버 화면에서는 왼쪽 위 '같이 하기' 버튼
+  const modeEl = document.getElementById('mode');
   function syncMpButton() {
-    const show = !room && state !== 'playing' && mpDialog.hidden;
-    if (mpOpen.hidden === show) mpOpen.hidden = !show;
+    const free = !room && mpDialog.hidden;
+    const showMode = free && state === 'ready';
+    const showOpen = free && state === 'over';
+    if (modeEl.hidden === showMode) modeEl.hidden = !showMode;
+    if (mpOpen.hidden === showOpen) mpOpen.hidden = !showOpen;
   }
 
-  for (const el of [mpOpen, mpDialog, roomEl]) el.addEventListener('pointerdown', (e) => e.stopPropagation());
+  for (const el of [mpOpen, mpDialog, roomEl, modeEl]) el.addEventListener('pointerdown', (e) => e.stopPropagation());
   mpOpen.addEventListener('click', () => openMp());
+  document.getElementById('mode-solo').addEventListener('click', (e) => { e.currentTarget.blur(); startGame(); });
+  document.getElementById('mode-multi').addEventListener('click', (e) => { e.currentTarget.blur(); openMp(); });
+  document.getElementById('mp-next').addEventListener('click', mpNext);
+  mpName.addEventListener('keydown', (e) => { if (e.key === 'Enter') mpNext(); });
+  document.getElementById('mp-rename').addEventListener('click', () => { mpStep(1); mpMsg.textContent = ''; mpName.focus(); });
   document.getElementById('mp-close').addEventListener('click', closeMp);
   document.getElementById('mp-create').addEventListener('click', () => {
     joinRoom(Array.from({ length: 4 }, () => ROOM_CHARS[Math.floor(Math.random() * ROOM_CHARS.length)]).join(''));
@@ -2195,7 +2269,7 @@ const VERSION = '2026-10-28.42';
     ctx.globalAlpha = 0.6 + 0.3 * Math.cos(clock * Math.PI * 2 / 1.6); // 천천히 깜빡임
     ctx.fillStyle = '#f8fafc';
     ctx.font = '15px system-ui, sans-serif';
-    ctx.fillText(room ? roomHint() : isTouch ? '화면을 탭해서 시작' : 'Enter / Space로 시작', W / 2, y + 84);
+    if (room) ctx.fillText(roomHint(), W / 2, y + 84); // 방 밖에서는 이 자리에 혼자 하기 / 같이 하기 버튼
     ctx.globalAlpha = 1;
 
     const rows = [
@@ -2319,6 +2393,19 @@ const VERSION = '2026-10-28.42';
         ctx.fillText('CRASH!', x, y);
         ctx.font = '16px system-ui, sans-serif';
       }
+      const rr = roomRank();
+      if (rr) {
+        // 같이 하기 순위: 아직 달리는 사람이 있으면 현재 순위, 모두 끝나면 최종 순위
+        const font = ctx.font, color = ctx.fillStyle;
+        ctx.font = 'bold 22px system-ui, sans-serif';
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillText(rr.alive
+          ? `현재 ${rr.rank}등 / ${rr.n}명 · ${rr.alive}명 달리는 중`
+          : `${rr.rank === 1 ? '🏆 ' : ''}최종 ${rr.rank}등 / ${rr.n}명`, x, ry);
+        ctx.font = font;
+        ctx.fillStyle = color;
+        ry += 30;
+      }
       ctx.fillText(room ? roomHint() : isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, ry);
       // 길게 누르는 동안 진행 막대
       if (restartHold !== null) {
@@ -2329,6 +2416,18 @@ const VERSION = '2026-10-28.42';
         ctx.fillRect(x - 80, ry + 10, 160 * t, 4);
       }
     }
+  }
+
+  // 이번 판 방 안 순위 (같이 출발한 사람 중 점수 순, 같은 점수는 같은 등수)
+  function roomRank() {
+    if (!room) return null;
+    const ps = [...room.players.values()].filter((p) => p.status !== 'ready');
+    if (!ps.some((p) => p.id === myId)) return null;
+    return {
+      rank: 1 + ps.filter((p) => p.id !== myId && p.score > score).length,
+      n: ps.length,
+      alive: ps.filter((p) => p.status === 'playing').length,
+    };
   }
 
   function roomHint() {
@@ -2388,7 +2487,7 @@ const VERSION = '2026-10-28.42';
 
   function layoutOver(W, H) {
     const split = isSplit(W, H);
-    const extra = cleared ? 28 : 0; // 만점 축하 문구로 늘어난 높이
+    const extra = (cleared ? 28 : 0) + (room ? 30 : 0); // 만점 축하 문구·같이 하기 순위로 늘어난 높이
     let x = W / 2, y;
     let key;
     const roomBox = roomEl.hidden ? null : roomEl.getBoundingClientRect();
