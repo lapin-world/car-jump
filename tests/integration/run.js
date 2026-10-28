@@ -253,6 +253,9 @@ function check(name, ok, detail = '') { results.push({ name, ok, detail }); log(
 
   // ---------- 전체 ----------
   check('모든 창 자바스크립트 오류 없음', errors.length === 0, errors.slice(0, 5).join(' | '));
+  // 아이템전(공격·아이템 사용)까지 포함한 모든 판이 서버 리플레이 검증을 통과해야 함
+  const { rejects } = await (await fetch(BASE + '__rejects')).json();
+  check('랭킹 리플레이 검증 거절 없음', rejects.length === 0, rejects.length ? JSON.stringify(rejects.slice(0, 5)) : `${(await (await fetch(BASE + '__submits')).json()).length}건 모두 통과`);
   const stats = JSON.parse(fs.readFileSync(__dirname + '/relay-stats.json', 'utf8'));
   results.push({ name: '중계 서버 통계', ok: true, detail: `보낸 메시지 ${stats.sent}, 전달 ${stats.delivered}, 초당 최대 전달 ${stats.peakDeliveredPerSec}, 최대 동시 연결 ${stats.peakConns}, 채널별 ${JSON.stringify(stats.byTopic)}` });
   fs.writeFileSync(__dirname + '/results.json', JSON.stringify({ results, stats, errors }, null, 1));
