@@ -1132,7 +1132,7 @@ const VERSION = '2026-10-28.53';
     if (!lobbyCh || !lobbyReady) return;
     if (room && room.host === myId) {
       const ps = [...room.players.values()];
-      const meta = { code: room.code, host: room.me.name, mode: room.mode, n: room.players.size, playing: ps.some((p) => p.status === 'playing') || !!countdownAt };
+      const meta = { code: room.code, host: room.me.name, mode: room.mode, n: room.players.size, playing: ps.some(running) || !!countdownAt }; // 창을 닫은 유령은 게임 중으로 치지 않음
       const k = JSON.stringify(meta);
       if (k !== lobbyMeta) { lobbyMeta = k; lobbyCh.track(meta); }
     } else if (lobbyMeta) {
