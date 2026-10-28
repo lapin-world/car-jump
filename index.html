@@ -160,7 +160,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.41';
+const VERSION = '2026-10-28.42';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -259,9 +259,8 @@ const VERSION = '2026-10-28.41';
   const VIEW_MIN_H = 660;
   let W = 0, H = 0, groundY = 0;  // 게임 월드(논리) 크기
   let SW = 0, SH = 0, viewScale = 1, dpr = 1; // 실제 화면 크기와 축소 배율
-  // 같이 하기: 화면 위쪽 topInset(px)에 상대 화면을 그리고 내 게임은 그 아래에 그림.
-  // originX/Y 는 지금 그리는 게임 화면의 왼쪽 위 (기기 픽셀). 화면 픽셀에 맞춰 그리는 함수(fillPlaid 등)가 사용
-  let topInset = 0, originX = 0, originY = 0;
+  // 같이 하기: 화면 위쪽 topInset(px)에 상대 화면을 그리고 내 게임은 그 아래에 그림
+  let topInset = 0;
   let state = 'ready'; // ready | playing | over
   let speed, distance, score, best, obstacles, spawnTimer, particles, flips, popups, combo, carsPassed, level, burst;
   let holding = false; // 점프 버튼을 누르고 있는지
@@ -987,7 +986,7 @@ const VERSION = '2026-10-28.41';
     const r1 = (v) => Math.round(v), r2 = (v) => Math.round(v * 100) / 100;
     return {
       d: r1(distance), s: r1(speed),
-      p: [r1(player.y), r1(player.vy), r2(player.roll), r2(player.airTime), player.onGround ? 1 : 0, player.mode || '', r2(clock - player.lastTap)],
+      p: [r1(player.y), r1(player.vy), r2(player.roll), r2(player.airTime), player.onGround ? 1 : 0, player.mode || ''],
       o: obstacles.filter((o) => o.x - px < 1800).map((o) => o.rival
         ? [-1, r1(o.x - px), r1(o.jumpAt - px), r1(o.land - px), r2(o.t), o.landed ? 1 : 0]
         : [OBSTACLE_TYPES.indexOf(o.type), r1(o.x - px)]),
@@ -1098,114 +1097,162 @@ const VERSION = '2026-10-28.41';
     overLayoutKey = '';
   }
 
-  // 받은 상태 + 받은 뒤 지난 시간(dt)만큼 예측해서 그리기용 월드(전역 변수)를 채움
-  function setRemoteWorld(rp, now) {
+  // 받은 상태 + 받은 뒤 지난 시간(dt)만큼 예측한 상대 월드 { distance, player, obstacles, tunnel }
+  function remoteWorld(rp, now, px) {
     const f = rp.frame;
     const dt = f && rp.status === 'playing' ? Math.min(0.5, (now - rp.frameAt) / 1000) : 0;
     const sp = f ? f.s : START_SPEED;
-    const px = Math.max(90, W * 0.2);
-    speed = sp;
-    distance = (f ? f.d : 0) + sp * dt;
-    if (!f) {
-      player = { x: px, y: 0, vy: 0, roll: 0, airTime: 0, onGround: true, mode: null, lastTap: clock, wheel: 0 };
-      obstacles = [];
-      tunnel = null;
-      return;
-    }
-    let [y, vy, roll, air, ground, mode, since] = f.p;
+    const distance = (f ? f.d : 0) + sp * dt;
+    if (!f) return { distance, player: { y: 0, roll: 0, onGround: true }, obstacles: [], tunnel: null };
+    let [y, vy, roll, air, ground, mode] = f.p;
     if (!ground && !mode) {
       air += dt;
       y += vy * dt - GRAVITY * dt * dt / 2;
-      vy -= GRAVITY * dt;
       const p = Math.min(1, air / airDuration());
       roll = Math.PI * 2 * ROLLS_PER_JUMP * (p - Math.sin(2 * Math.PI * p) / (2 * Math.PI));
-      if (y <= 0) { y = 0; vy = 0; roll = 0; ground = 1; }
+      if (y <= 0) { y = 0; roll = 0; ground = 1; }
     }
-    player = { x: px, y, vy, roll, airTime: air, onGround: !!ground, mode: mode || null, lastTap: clock - since - dt, wheel: distance / 14 };
-    obstacles = f.o.map(([ti, rx, jump, land, t, landed]) => {
-      if (ti >= 0) {
-        const type = OBSTACLE_TYPES[ti];
-        return { type, w: type.w, h: type.h, x: px + rx - sp * dt };
-      }
-      const o = { type: RIVAL, w: RIVAL.w, h: RIVAL.h, rival: true, peak: OVER_HOP, t, p: 0, hop: 0, roll: 0, pitch: 0, landed: !!landed, wheel: distance / 14, x: px + rx - sp * dt };
+    const obstacles = f.o.map(([ti, rx, jump, land, t, landed]) => {
+      if (ti >= 0) return { type: OBSTACLE_TYPES[ti], x: px + rx - sp * dt };
+      const o = { rival: true, x: px + rx - sp * dt, hop: 0, roll: 0 };
       if (t >= 0 && !landed) {
         const tt = t + dt, p = Math.min(1, tt / ROLL_TIME);
-        o.t = tt;
-        o.p = p;
         if (p < 1) {
           o.x = px + jump + (land - jump) * p;
           o.hop = 4 * OVER_HOP * p * (1 - p);
           o.roll = Math.PI * 2 * (p - Math.sin(2 * Math.PI * p) / (2 * Math.PI));
-          o.pitch = Math.atan2(4 * OVER_HOP * (1 - 2 * p) / ROLL_TIME, sp) * 0.35;
         } else {
-          o.landed = true;
           o.x = px + land - sp * (tt - ROLL_TIME);
         }
       }
       return o;
     });
-    tunnel = f.tn ? { x: px + f.tn[0] - sp * dt, len: f.tn[1] } : null;
+    return { distance, player: { y, roll, onGround: !!ground }, obstacles, tunnel: f.tn ? { x: px + f.tn[0] - sp * dt, len: f.tn[1] } : null };
   }
 
-  // 화면 위쪽 topInset 높이에 상대 수만큼 가로로 균등하게 나눠 상대 게임 화면을 그림
+  // 상대 화면용 라이벌 회전 프레임 (상대 화면에 라이벌이 처음 나올 때 한 번만 저해상도로 만듦)
+  const MINI_RIVAL_FRAMES = 24;
+  let miniRivalSprites = null;
+  function miniRivalSprite(roll) {
+    if (!miniRivalSprites) {
+      const k = CAR_SCALE * Math.max(1, dpr * 0.5);
+      miniRivalSprites = [];
+      for (let i = 0; i < MINI_RIVAL_FRAMES; i++) {
+        const cv = document.createElement('canvas');
+        cv.width = SPRITE_W * k;
+        cv.height = SPRITE_H * k;
+        const g = cv.getContext('2d');
+        g.setTransform(-k, 0, 0, k, cv.width / 2, cv.height / 2); // 좌우 반전: 왼쪽을 향함
+        renderRoadster(g, (i / MINI_RIVAL_FRAMES) * Math.PI * 2, 0, RIVAL_MESH);
+        miniRivalSprites.push(cv);
+      }
+    }
+    const n = MINI_RIVAL_FRAMES;
+    return miniRivalSprites[((Math.round((roll / (Math.PI * 2)) * n) % n) + n) % n];
+  }
+
+  // 상대 화면 한 칸: 성능을 위해 배경(하늘·빌딩·달·조명)과 효과(연기·분사·빛 번짐)는 빼고
+  // 단색 하늘·도로, 단순한 터널, 미리 그려 둔 차량 이미지만 그림 (g: 논리 좌표로 변환된 컨텍스트)
+  function drawMini(g, wd, Wm) {
+    const gy = MINI_GROUND;
+    g.fillStyle = '#060a16';
+    g.fillRect(0, 0, Wm, gy);
+    g.fillStyle = '#0c0f16';
+    g.fillRect(0, gy, Wm, MINI_H - gy);
+    g.fillStyle = '#334155';
+    const dash = wd.distance % 60;
+    for (let x = -dash; x < Wm; x += 60) g.fillRect(x, gy + 22, 30, 3);
+    const tn = wd.tunnel;
+    if (tn && tn.x < Wm && tn.x + tn.len > 0) {
+      const x1 = Math.max(0, tn.x), w = Math.min(Wm, tn.x + tn.len) - x1;
+      g.fillStyle = 'rgba(225,18,40,0.16)';
+      g.fillRect(x1, gy - TUNNEL_CEIL, w, TUNNEL_CEIL);
+      g.fillStyle = '#e11d48';
+      g.fillRect(x1, gy - TUNNEL_TOP, w, TUNNEL_TOP - TUNNEL_CEIL);
+    }
+    for (const o of wd.obstacles) {
+      if (o.x > Wm || o.x < -300) continue;
+      if (o.rival) {
+        const sp = miniRivalSprite(o.roll);
+        const cx = o.x + RIVAL.w / 2, cy = gy - o.hop - AXIS_Y * CAR_SCALE;
+        g.drawImage(sp, cx - (SPRITE_W / 2) * CAR_SCALE, cy - (SPRITE_H / 2) * CAR_SCALE, SPRITE_W * CAR_SCALE, SPRITE_H * CAR_SCALE);
+      } else if (o.type.sprite) {
+        g.drawImage(o.type.sprite, o.x, gy - o.type.h + 2, o.type.w, o.type.h);
+      }
+    }
+    const pl = wd.player, px = wd.px;
+    const sprites = pl.onGround ? groundSprites : rollSprites;
+    const frame = pl.onGround ? 0 : ((Math.round((pl.roll / (Math.PI * 2)) * ROLL_FRAMES) % ROLL_FRAMES) + ROLL_FRAMES) % ROLL_FRAMES;
+    const cy = gy - pl.y - AXIS_Y * CAR_SCALE;
+    g.drawImage(sprites[frame], px - (SPRITE_W / 2) * CAR_SCALE, cy - (SPRITE_H / 2) * CAR_SCALE, SPRITE_W * CAR_SCALE, SPRITE_H * CAR_SCALE);
+  }
+
+  // 화면 위쪽 topInset 높이에 상대 수만큼 가로로 균등하게 나눠 상대 게임 화면을 그림.
+  // 별도 캔버스에 초당 MINI_FPS 번만 다시 그리고, 매 프레임은 그 이미지를 복사만 함
+  const MINI_FPS = 30;
+  const miniCanvas = document.createElement('canvas');
+  const miniCtx = miniCanvas.getContext('2d');
+  let miniAt = 0;
   function drawRivalViews() {
     const others = [...room.players.values()].filter((p) => p.id !== myId);
     if (!others.length) return;
-    const saved = { W, H, groundY, viewScale, distance, player, obstacles, tunnel, speed };
     const now = performance.now();
-    const cw = SW / others.length, chH = topInset;
-    const s = chH / MINI_H;
-    others.forEach((rp, i) => {
-      const x0 = Math.round(i * cw), w = Math.round((i + 1) * cw) - x0;
-      viewScale = s;
-      W = w / s;
-      H = MINI_H;
-      groundY = MINI_GROUND;
-      originX = x0 * dpr;
-      originY = 0;
-      setRemoteWorld(rp, now);
-      ctx.save();
-      ctx.setTransform(dpr * s, 0, 0, dpr * s, originX, 0);
-      ctx.beginPath();
-      ctx.rect(0, 0, W, H);
-      ctx.clip();
-      drawBackground();
-      drawTunnelBack();
-      for (const o of obstacles) drawObstacle(o);
-      drawRoadster();
-      drawTunnelFront();
-      ctx.restore();
+    const chH = topInset;
+    if (miniCanvas.width !== Math.round(SW * dpr) || miniCanvas.height !== Math.round(chH * dpr)) {
+      miniCanvas.width = Math.round(SW * dpr);
+      miniCanvas.height = Math.round(chH * dpr);
+      miniAt = 0;
+    }
+    if (now - miniAt >= 1000 / MINI_FPS - 2) {
+      miniAt = now;
+      const g = miniCtx;
+      const cw = SW / others.length;
+      const s = chH / MINI_H;
+      others.forEach((rp, i) => {
+        const x0 = Math.round(i * cw), w = Math.round((i + 1) * cw) - x0;
+        const Wm = w / s;
+        const wd = remoteWorld(rp, now, Math.max(90, Wm * 0.2));
+        wd.px = Math.max(90, Wm * 0.2);
+        g.save();
+        g.setTransform(dpr * s, 0, 0, dpr * s, x0 * dpr, 0);
+        g.beginPath();
+        g.rect(0, 0, Wm, MINI_H);
+        g.clip();
+        drawMini(g, wd, Wm);
+        g.restore();
 
-      // 이름·점수·상태 (화면 픽셀 기준)
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      if (rp.status !== 'playing') {
-        ctx.fillStyle = 'rgba(2,6,23,0.55)';
-        ctx.fillRect(x0, 0, w, chH);
-        ctx.textAlign = 'center';
-        ctx.fillStyle = rp.status === 'over' ? '#ef4444' : '#cbd5e1';
-        ctx.font = `bold ${Math.min(22, Math.max(13, chH / 8))}px system-ui, sans-serif`;
-        ctx.fillText(rp.status === 'over' ? 'CRASH!' : '대기 중', x0 + w / 2, chH / 2 + 6);
-      }
-      ctx.font = 'bold 13px system-ui, sans-serif';
-      const label = `${rp.id === room.host ? '👑 ' : ''}${rp.name}`;
-      const scoreText = String(rp.score || 0);
-      ctx.fillStyle = 'rgba(2,6,23,0.6)';
-      ctx.fillRect(x0, 0, w, 22);
-      ctx.textAlign = 'left';
-      ctx.fillStyle = '#f8fafc';
-      const scoreW = ctx.measureText(scoreText).width;
-      let name = label;
-      while (name.length > 1 && ctx.measureText(name).width > w - scoreW - 22) name = name.slice(0, -1);
-      ctx.fillText(name === label ? name : `${name}…`, x0 + 6, 16);
-      ctx.textAlign = 'right';
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillText(scoreText, x0 + w - 6, 16);
-      // 칸 구분선·아래 경계선
-      ctx.fillStyle = 'rgba(148,163,184,0.5)';
-      if (i) ctx.fillRect(x0, 0, 1, chH);
-      if (i === others.length - 1) ctx.fillRect(0, chH - 1, SW, 1);
-    });
-    ({ W, H, groundY, viewScale, distance, player, obstacles, tunnel, speed } = saved);
+        // 이름·점수·상태 (화면 픽셀 기준)
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (rp.status !== 'playing') {
+          g.fillStyle = 'rgba(2,6,23,0.55)';
+          g.fillRect(x0, 0, w, chH);
+          g.textAlign = 'center';
+          g.fillStyle = rp.status === 'over' ? '#ef4444' : '#cbd5e1';
+          g.font = `bold ${Math.min(22, Math.max(13, chH / 8))}px system-ui, sans-serif`;
+          g.fillText(rp.status === 'over' ? 'CRASH!' : '대기 중', x0 + w / 2, chH / 2 + 6);
+        }
+        g.font = 'bold 13px system-ui, sans-serif';
+        const label = `${rp.id === room.host ? '👑 ' : ''}${rp.name}`;
+        const scoreText = String(rp.score || 0);
+        g.fillStyle = 'rgba(2,6,23,0.6)';
+        g.fillRect(x0, 0, w, 22);
+        g.textAlign = 'left';
+        g.fillStyle = '#f8fafc';
+        const scoreW = g.measureText(scoreText).width;
+        let name = label;
+        while (name.length > 1 && g.measureText(name).width > w - scoreW - 22) name = name.slice(0, -1);
+        g.fillText(name === label ? name : `${name}…`, x0 + 6, 16);
+        g.textAlign = 'right';
+        g.fillStyle = '#fbbf24';
+        g.fillText(scoreText, x0 + w - 6, 16);
+        // 칸 구분선·아래 경계선
+        g.fillStyle = 'rgba(148,163,184,0.5)';
+        if (i) g.fillRect(x0, 0, 1, chH);
+        if (i === others.length - 1) g.fillRect(0, chH - 1, SW, 1);
+      });
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(miniCanvas, 0, 0);
   }
 
   function startCountdown() {
@@ -1988,7 +2035,7 @@ const VERSION = '2026-10-28.41';
     const f = viewScale * dpr;
     const dx = Math.round(ox * f), dy = Math.round(oy * f);
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, dx + originX, dy + originY);
+    ctx.setTransform(1, 0, 0, 1, dx, dy + topInset * dpr);
     ctx.fillStyle = plaid(scale, wall);
     ctx.fillRect(x * f - dx, y * f - dy, w * f, h * f);
     ctx.restore();
@@ -2047,7 +2094,7 @@ const VERSION = '2026-10-28.41';
     ctx.save();
     ctx.globalAlpha = 0.35;
     // y = groundY 기준 상하 반전: 무늬 원점(천장)이 거울 위치(2 * groundY - 천장)로 감
-    ctx.setTransform(1, 0, 0, -1, dx + originX, Math.round((groundY + TUNNEL_CEIL) * f) + originY);
+    ctx.setTransform(1, 0, 0, -1, dx, Math.round((groundY + TUNNEL_CEIL) * f) + topInset * dpr);
     ctx.fillStyle = plaid(1, true);
     ctx.fillRect(x1 * f - dx, (TUNNEL_CEIL - R) * f, w * f, R * f);
     ctx.restore();
@@ -2383,9 +2430,7 @@ const VERSION = '2026-10-28.41';
 
   function draw() {
     if (topInset) drawRivalViews();
-    originX = 0;
-    originY = topInset * dpr;
-    ctx.setTransform(dpr * viewScale, 0, 0, dpr * viewScale, originX, originY);
+    ctx.setTransform(dpr * viewScale, 0, 0, dpr * viewScale, 0, topInset * dpr);
     drawBackground();
     drawTunnelBack();
     for (const o of obstacles) drawObstacle(o);
