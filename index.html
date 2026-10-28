@@ -232,7 +232,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.50';
+const VERSION = '2026-10-28.51';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -2812,7 +2812,8 @@ const VERSION = '2026-10-28.50';
         ctx.fillStyle = color;
         ry += 30;
       }
-      ctx.fillText(room ? roomHint() : isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, ry);
+      // 같이 하기 방에서는 같은 안내가 방 패널에 있으므로 생략
+      if (!room) ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, ry);
       // 길게 누르는 동안 진행 막대
       if (restartHold !== null) {
         const t = Math.min(1, (clock - restartHold) / RESTART_HOLD);
@@ -2900,18 +2901,26 @@ const VERSION = '2026-10-28.50';
     let sideW = ''; // 비우면 CSS 기본 폭
     if (split) {
       x = Math.round(W * 0.27);
+      y = Math.round(Math.max(72, H * 0.3));
+      let rankMaxH = H - 24;
       if (roomBox) {
         const left = roomBox.right + 12, right = W - 16 - Math.min(320, W * 0.46);
-        x = Math.round(Math.max(x, (left + right) / 2));
-        sideW = `${Math.round(Math.min(300, right - left - 8))}px`;
+        if (right - left >= 320) {
+          x = Math.round(Math.max(x, (left + right) / 2));
+          sideW = `${Math.round(Math.min(300, right - left - 8))}px`;
+        } else {
+          // 방 패널과 랭킹 패널 사이가 좁으면 문구를 두 패널 아래 가운데에 두고 랭킹 패널 높이를 그 위로 제한
+          x = Math.round(W / 2);
+          y = Math.round(Math.min(H - 40 - extra, roomBox.bottom - topInset + 40));
+          rankMaxH = Math.max(60, y - 52 - 12);
+        }
       }
-      y = Math.round(Math.max(72, H * 0.3));
-      key = `s${x},${y},${H},${rankEl.hidden},${extra},${sideW},${topInset}`;
+      key = `s${x},${y},${H},${rankEl.hidden},${extra},${sideW},${topInset},${rankMaxH}`;
       if (key !== overLayoutKey) {
         rankEl.classList.add('split');
         if (rankForm.parentNode !== rankSide) rankSide.append(rankForm);
         rankEl.style.top = `${topInset + 12}px`;
-        rankEl.style.maxHeight = `${H - 24}px`;
+        rankEl.style.maxHeight = `${rankMaxH}px`;
         rankSide.style.left = `${x}px`;
         rankSide.style.width = sideW;
         rankSide.style.top = `${topInset + y + 58 + extra}px`;
