@@ -76,6 +76,50 @@
   #rank.split li.top .no { font-size: 15px; }
   #rank.split li.g1 { padding: 4px 8px; font-size: 15px; }
   #rank.split li.g2, #rank.split li.g3 { font-size: 14px; }
+  /* 멀티플레이: 시작 버튼, 방 만들기·참여 창, 방 현황(실시간 점수) 패널 */
+  #mp-open {
+    position: fixed; left: max(12px, env(safe-area-inset-left)); top: max(36px, env(safe-area-inset-top));
+    padding: 8px 12px; border: 1px solid rgba(251,191,36,0.6); border-radius: 10px;
+    background: rgba(15,23,42,0.75); color: #fbbf24; font: 600 14px system-ui, sans-serif;
+  }
+  #mp-open[hidden], #mp[hidden], #room[hidden] { display: none; }
+  #room [hidden] { display: none !important; } /* .btns 의 display:flex 보다 우선 */
+  #mp {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(2,6,23,0.6); font: 14px system-ui, sans-serif; color: #f8fafc;
+  }
+  #mp .box {
+    width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 16px;
+    border: 1px solid rgba(148,197,255,0.4); border-radius: 14px; background: rgba(15,23,42,0.95);
+  }
+  #mp h2 { margin: 0 0 12px; font-size: 18px; }
+  #mp .row { display: flex; gap: 8px; margin-bottom: 10px; }
+  #mp input {
+    flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #475569; border-radius: 8px;
+    background: #0f172a; color: #f8fafc; font: inherit; font-size: 16px; user-select: text; -webkit-user-select: text;
+  }
+  #mp button, #room button {
+    padding: 8px 12px; border: 0; border-radius: 8px; background: #fbbf24; color: #111827; font: 600 14px system-ui, sans-serif;
+  }
+  #mp button:disabled, #room button:disabled { opacity: 0.5; }
+  #mp button.sub, #room button.sub { background: #334155; color: #f8fafc; }
+  #mp .msg { min-height: 18px; margin: 4px 0 10px; color: #94a3b8; }
+  #room {
+    position: fixed; left: max(12px, env(safe-area-inset-left)); top: max(60px, calc(env(safe-area-inset-top) + 48px));
+    width: 200px; box-sizing: border-box; padding: 8px 10px; border: 1px solid rgba(148,197,255,0.3); border-radius: 12px;
+    background: rgba(15,23,42,0.75); color: #f8fafc; font: 13px system-ui, sans-serif;
+  }
+  #room.playing { pointer-events: none; background: rgba(15,23,42,0.45); } /* 게임 중에는 탭이 점프로 전달되게 */
+  #room .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-weight: 700; }
+  #room ol { list-style: none; margin: 0; padding: 0; }
+  #room li { display: flex; gap: 6px; padding: 2px 0; }
+  #room li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #room li .score { font-variant-numeric: tabular-nums; font-weight: 700; }
+  #room li.me .name { color: #38bdf8; }
+  #room li.over { opacity: 0.55; }
+  #room .btns { display: flex; gap: 6px; margin-top: 8px; }
+  #room .btns button { flex: 1; padding: 6px 4px; font-size: 13px; white-space: nowrap; }
+  #room .msg { margin: 6px 0 0; color: #94a3b8; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -90,9 +134,33 @@
 </div>
 <div id="rank-side" hidden></div>
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
+<button id="mp-open" type="button" hidden>👥 같이 하기</button>
+<div id="mp" hidden>
+  <div class="box">
+    <h2>같이 하기 (최대 4명)</h2>
+    <div class="row"><input id="mp-name" maxlength="12" placeholder="내 이름 (최대 12자)" autocomplete="off"></div>
+    <div class="row"><button id="mp-create" type="button" style="flex:1">방 만들기</button></div>
+    <div class="row">
+      <input id="mp-code" maxlength="4" placeholder="방 코드 4자리" autocomplete="off" autocapitalize="characters">
+      <button id="mp-join" type="button">참여</button>
+    </div>
+    <p class="msg" id="mp-msg"></p>
+    <div class="row"><button id="mp-close" class="sub" type="button" style="flex:1">닫기</button></div>
+  </div>
+</div>
+<div id="room" hidden>
+  <div class="head"><span id="room-code"></span><span id="room-count"></span></div>
+  <ol id="room-list"></ol>
+  <div class="btns" id="room-btns">
+    <button id="room-start" type="button">시작</button>
+    <button id="room-copy" class="sub" type="button">초대</button>
+    <button id="room-leave" class="sub" type="button">나가기</button>
+  </div>
+  <p class="msg" id="room-msg"></p>
+</div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-26.39';
+const VERSION = '2026-10-28.40';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -262,8 +330,10 @@ const VERSION = '2026-10-26.39';
   let restartHold = null; // 길게 누르기 시작 시각 (clock 기준)
 
   function handleInput() {
+    if (!mpDialog.hidden) return;
     if (paused) return setPaused(false); // 일시정지 중 입력은 재개만 (점프로 이어지지 않음)
     if (state === 'playing') return feverTap() || jump();
+    if (room) return; // 같이 하기 방에서는 방장이 '시작'을 눌러야 다 같이 출발
     if (state === 'over') {
       restartHold = clock;
       return;
@@ -272,12 +342,13 @@ const VERSION = '2026-10-26.39';
   }
 
   function startGame() {
-    if (pendingVersion && applyUpdate()) return;
+    if (!room && pendingVersion && applyUpdate()) return; // 방에 있는 동안은 새로고침으로 방이 끊기지 않게
     hideRanking();
     reset();
     state = 'playing';
     pauseBtn.hidden = false;
     jump();
+    roomStatus();
   }
 
   // ---------- 일시정지 ----------
@@ -303,7 +374,7 @@ const VERSION = '2026-10-26.39';
   document.addEventListener('visibilitychange', () => { if (document.hidden) setPaused(true); });
 
   window.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT') return; // 랭킹 이름 입력 중에는 점프/재시작 안 함
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return; // 랭킹 이름 입력·버튼 포커스 중에는 점프/재시작 안 함
     if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
     if (e.repeat) return;
@@ -705,6 +776,7 @@ const VERSION = '2026-10-26.39';
       try { localStorage.setItem('roadster-best', String(best)); } catch {}
     }
     showRanking();
+    roomStatus();
   }
 
   // 만점 달성: 점수를 만점으로 맞추고 게임 종료 + 축하 화면
@@ -717,6 +789,7 @@ const VERSION = '2026-10-26.39';
     best = score;
     try { localStorage.setItem('roadster-best', String(best)); } catch {}
     showRanking();
+    roomStatus();
   }
 
   // ---------- 새 버전 자동 갱신 ----------
@@ -740,7 +813,7 @@ const VERSION = '2026-10-26.39';
       const latest = (html.match(/const VERSION = '([^']+)'/) || [])[1];
       if (!latest || latest === VERSION) return;
       pendingVersion = latest;
-      if (state === 'ready') applyUpdate();
+      if (state === 'ready' && !room) applyUpdate();
     } catch {}
   }
 
@@ -838,6 +911,242 @@ const VERSION = '2026-10-26.39';
       rankMsg.textContent = name.length > 12 ? '이름은 12자까지 쓸 수 있어요' : '등록에 실패했어요. 다시 시도해 주세요';
     }
   });
+
+  // ---------- 같이 하기 (멀티플레이, Supabase Realtime) ----------
+  // 방 코드 = Realtime 채널 이름. 접속자 목록은 Presence, 시작 신호·점수는 Broadcast 로 주고받음.
+  // 각자 자기 게임(차량 배치도 각자 랜덤)을 하면서 서로의 점수를 실시간으로 보는 대전 방식
+  const ROOM_MAX = 4;
+  const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 헷갈리는 0·O·1·I 제외
+  const COUNTDOWN = 3;      // 시작 신호 후 출발까지(초)
+  const SCORE_SEND = 0.4;   // 점수 전송 최소 간격(초)
+  const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.99.3/dist/umd/supabase.js';
+  const mpOpen = document.getElementById('mp-open');
+  const mpDialog = document.getElementById('mp');
+  const mpName = document.getElementById('mp-name');
+  const mpCode = document.getElementById('mp-code');
+  const mpMsg = document.getElementById('mp-msg');
+  const roomEl = document.getElementById('room');
+  const roomList = document.getElementById('room-list');
+  const roomStart = document.getElementById('room-start');
+  const roomMsg = document.getElementById('room-msg');
+  const myId = Math.random().toString(36).slice(2, 10);
+  let room = null;          // { code, ch, players: Map(id → { id, name, joined, score, status, t }), host }
+  let countdownAt = 0;      // 출발 시각 (performance.now 기준), 0 이면 카운트다운 없음
+  let sentScore = -1, sentAt = 0, sendSeq = 0, roomRenderKey = '';
+  let sbClient = null;
+
+  function loadSupabase() {
+    if (window.supabase) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = SUPABASE_JS;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.append(s);
+    });
+  }
+
+  function openMp(code = '') {
+    try { mpName.value = mpName.value || localStorage.getItem('roadster-name') || ''; } catch {}
+    mpCode.value = code;
+    mpMsg.textContent = '';
+    mpDialog.hidden = false;
+    holding = false;
+    (mpName.value ? (code ? document.getElementById('mp-join') : mpCode) : mpName).focus();
+  }
+
+  function closeMp() {
+    mpDialog.hidden = true;
+    document.activeElement.blur();
+  }
+
+  function myStatus() {
+    return { id: myId, score: score || 0, status: state, t: ++sendSeq };
+  }
+
+  // 받은 정보가 더 최신(t 가 큼)일 때만 반영
+  function mergePlayer(p) {
+    const cur = room.players.get(p.id);
+    if (!cur) return;
+    if (p.t >= (cur.t || 0)) Object.assign(cur, { score: p.score, status: p.status, t: p.t });
+  }
+
+  async function joinRoom(code) {
+    const name = mpName.value.trim().slice(0, 12);
+    if (!name) { mpMsg.textContent = '이름을 입력해 주세요'; mpName.focus(); return; }
+    code = code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (code.length !== 4) { mpMsg.textContent = '방 코드 4자리를 입력해 주세요'; mpCode.focus(); return; }
+    try { localStorage.setItem('roadster-name', name); } catch {}
+    mpMsg.textContent = '연결 중…';
+    for (const b of mpDialog.querySelectorAll('button')) b.disabled = true;
+    try {
+      await loadSupabase();
+      sbClient = sbClient || window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    } catch {
+      mpMsg.textContent = '연결 모듈을 불러오지 못했어요';
+      for (const b of mpDialog.querySelectorAll('button')) b.disabled = false;
+      return;
+    }
+    const ch = sbClient.channel(`car-jump-room-${code}`, { config: { presence: { key: myId }, broadcast: { self: false } } });
+    const r = { code, ch, players: new Map(), host: null, me: { name, joined: Date.now() } };
+    ch.on('presence', { event: 'sync' }, () => onPresence(r))
+      .on('broadcast', { event: 'start' }, () => { if (room === r) startCountdown(); })
+      .on('broadcast', { event: 'score' }, ({ payload }) => { if (room === r) { mergePlayer(payload); renderRoom(); } })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          if (room && room !== r) return;
+          room = r;
+          sentScore = -1;
+          await ch.track({ name, joined: r.me.joined, ...myStatus() });
+          closeMp();
+          history.replaceState(null, '', `${location.pathname}?room=${code}`);
+        } else if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && room !== r) {
+          sbClient.removeChannel(ch);
+          mpMsg.textContent = '방에 연결하지 못했어요. 다시 시도해 주세요';
+          for (const b of mpDialog.querySelectorAll('button')) b.disabled = false;
+        }
+      });
+  }
+
+  function onPresence(r) {
+    const prev = r.players;
+    const list = Object.entries(r.ch.presenceState()).map(([id, metas]) => ({ id, ...metas[metas.length - 1] }));
+    // 먼저 들어온 순서로 정렬: 맨 앞이 방장, ROOM_MAX 명까지만 입장
+    list.sort((a, b) => a.joined - b.joined || (a.id < b.id ? -1 : 1));
+    if (room === r && list.findIndex((p) => p.id === myId) >= ROOM_MAX) {
+      leaveRoom();
+      openMp();
+      mpMsg.textContent = `방이 가득 찼어요 (최대 ${ROOM_MAX}명)`;
+      return;
+    }
+    r.players = new Map(list.slice(0, ROOM_MAX).map((p) => {
+      const old = prev.get(p.id);
+      return [p.id, old && old.t > p.t ? { ...p, score: old.score, status: old.status, t: old.t } : p];
+    }));
+    r.host = list[0] && list[0].id;
+    if (room === r) renderRoom();
+  }
+
+  function leaveRoom() {
+    if (!room) return;
+    sbClient.removeChannel(room.ch);
+    room = null;
+    countdownAt = 0;
+    roomEl.hidden = true;
+    roomRenderKey = '';
+    history.replaceState(null, '', location.pathname);
+  }
+
+  // 시작/게임 오버 때 상태를 Presence 에도 남겨 나중에 들어온 사람도 볼 수 있게 함
+  function roomStatus() {
+    if (!room) return;
+    const p = myStatus();
+    room.ch.track({ name: room.me.name, joined: room.me.joined, ...p });
+    room.ch.send({ type: 'broadcast', event: 'score', payload: p });
+    sentScore = p.score;
+    sentAt = clock;
+    mergePlayer(p);
+    renderRoom();
+  }
+
+  // 게임 중 점수가 바뀌면 SCORE_SEND 초에 한 번 이하로 전송 (매 프레임 호출)
+  function roomTick(now) {
+    if (!room) return;
+    if (countdownAt && now >= countdownAt) {
+      countdownAt = 0;
+      setPaused(false);
+      startGame();
+    }
+    if (state === 'playing' && score !== sentScore && clock - sentAt >= SCORE_SEND) {
+      const p = myStatus();
+      room.ch.send({ type: 'broadcast', event: 'score', payload: p });
+      sentScore = p.score;
+      sentAt = clock;
+      mergePlayer(p);
+      renderRoom();
+    }
+  }
+
+  function startCountdown() {
+    if (state === 'playing' || countdownAt) return;
+    countdownAt = performance.now() + COUNTDOWN * 1000;
+    hideRanking();
+    renderRoom();
+  }
+
+  function canStart() {
+    return room && room.host === myId && !countdownAt && [...room.players.values()].every((p) => p.status !== 'playing');
+  }
+
+  function renderRoom() {
+    if (!room) return;
+    const players = [...room.players.values()];
+    const playing = state === 'playing' || countdownAt;
+    // 게임을 시작한 뒤에는 점수 순, 대기 중에는 들어온 순
+    if (players.some((p) => p.status !== 'ready')) players.sort((a, b) => b.score - a.score);
+    const host = room.host === myId;
+    const msg = countdownAt ? '곧 출발!'
+      : playing ? ''
+      : host ? (canStart() ? '모두 모이면 시작을 눌러 주세요' : '다른 사람이 끝날 때까지 기다려요')
+      : '방장이 시작하면 같이 출발해요';
+    const key = JSON.stringify([players.map((p) => [p.id, p.name, p.score, p.status]), room.host, playing, msg, canStart()]);
+    if (key === roomRenderKey) return;
+    roomRenderKey = key;
+    roomEl.hidden = false;
+    roomEl.classList.toggle('playing', !!playing);
+    document.getElementById('room-code').textContent = `방 ${room.code}`;
+    document.getElementById('room-count').textContent = `${room.players.size}/${ROOM_MAX}`;
+    roomList.replaceChildren(...players.map((p) => {
+      const li = document.createElement('li');
+      if (p.id === myId) li.classList.add('me');
+      if (p.status === 'over') li.classList.add('over');
+      const n = document.createElement('span'); n.className = 'name';
+      n.textContent = `${p.id === room.host ? '👑 ' : ''}${p.name}${p.status === 'over' ? ' 💥' : p.status === 'playing' ? ' 🚕' : ''}`;
+      const v = document.createElement('span'); v.className = 'score'; v.textContent = p.status === 'ready' ? '대기' : p.score;
+      li.append(n, v);
+      return li;
+    }));
+    document.getElementById('room-btns').hidden = !!playing;
+    roomStart.hidden = !host;
+    roomStart.disabled = !canStart();
+    roomMsg.textContent = msg;
+    roomMsg.hidden = !msg;
+  }
+
+  // 시작 화면·게임 오버 화면에서만 '같이 하기' 버튼 표시
+  function syncMpButton() {
+    const show = !room && state !== 'playing' && mpDialog.hidden;
+    if (mpOpen.hidden === show) mpOpen.hidden = !show;
+  }
+
+  for (const el of [mpOpen, mpDialog, roomEl]) el.addEventListener('pointerdown', (e) => e.stopPropagation());
+  mpOpen.addEventListener('click', () => openMp());
+  document.getElementById('mp-close').addEventListener('click', closeMp);
+  document.getElementById('mp-create').addEventListener('click', () => {
+    joinRoom(Array.from({ length: 4 }, () => ROOM_CHARS[Math.floor(Math.random() * ROOM_CHARS.length)]).join(''));
+  });
+  document.getElementById('mp-join').addEventListener('click', () => joinRoom(mpCode.value));
+  mpCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(mpCode.value); });
+  roomStart.addEventListener('click', () => {
+    roomStart.blur();
+    if (!canStart()) return;
+    room.ch.send({ type: 'broadcast', event: 'start', payload: {} });
+    startCountdown();
+  });
+  document.getElementById('room-copy').addEventListener('click', async (e) => {
+    const url = `${location.origin}${location.pathname}?room=${room.code}`;
+    e.currentTarget.blur();
+    try {
+      if (navigator.share && isTouch) await navigator.share({ title: 'Kakao Taxi Jump 같이 하기', url });
+      else { await navigator.clipboard.writeText(url); roomMsg.hidden = false; roomMsg.textContent = '초대 링크를 복사했어요'; roomRenderKey = ''; }
+    } catch {}
+  });
+  document.getElementById('room-leave').addEventListener('click', (e) => { e.currentTarget.blur(); leaveRoom(); });
+  window.addEventListener('pagehide', () => { if (room) sbClient.removeChannel(room.ch); });
+
+  // 초대 링크(?room=코드)로 들어오면 참여 창을 바로 띄움
+  const inviteCode = (new URLSearchParams(location.search).get('room') || '').toUpperCase().slice(0, 4);
+  if (inviteCode) openMp(inviteCode);
 
   // ---------- 배경: 영상 속 야간 시연장 ----------
 
@@ -1696,7 +2005,7 @@ const VERSION = '2026-10-26.39';
     ctx.globalAlpha = 0.6 + 0.3 * Math.cos(clock * Math.PI * 2 / 1.6); // 천천히 깜빡임
     ctx.fillStyle = '#f8fafc';
     ctx.font = '15px system-ui, sans-serif';
-    ctx.fillText(isTouch ? '화면을 탭해서 시작' : 'Enter / Space로 시작', W / 2, y + 84);
+    ctx.fillText(room ? roomHint() : isTouch ? '화면을 탭해서 시작' : 'Enter / Space로 시작', W / 2, y + 84);
     ctx.globalAlpha = 1;
 
     const rows = [
@@ -1788,6 +2097,7 @@ const VERSION = '2026-10-26.39';
     if (state === 'playing' && tunnel && player.mode !== 'exitRoll' && player.x < tunnel.x + tunnel.len) drawFeverHUD(W);
 
     ctx.textAlign = 'center';
+    if (countdownAt) return; // 카운트다운 화면은 draw() 에서 따로 그림
     if (state === 'ready') {
       // 시작 화면 좌측 상단 버전 표기
       ctx.textAlign = 'left';
@@ -1819,7 +2129,7 @@ const VERSION = '2026-10-26.39';
         ctx.fillText('CRASH!', x, y);
         ctx.font = '16px system-ui, sans-serif';
       }
-      ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, ry);
+      ctx.fillText(room ? roomHint() : isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, ry);
       // 길게 누르는 동안 진행 막대
       if (restartHold !== null) {
         const t = Math.min(1, (clock - restartHold) / RESTART_HOLD);
@@ -1829,6 +2139,24 @@ const VERSION = '2026-10-26.39';
         ctx.fillRect(x - 80, ry + 10, 160 * t, 4);
       }
     }
+  }
+
+  function roomHint() {
+    return room.host === myId ? "왼쪽 위 '시작'을 누르면 다 같이 출발" : '방장이 시작하면 다 같이 출발';
+  }
+
+  // 같이 하기 카운트다운: 화면 가운데 큰 숫자
+  function drawCountdown(W, H) {
+    const left = Math.max(0, countdownAt - performance.now()) / 1000;
+    ctx.fillStyle = 'rgba(2,6,23,0.45)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = '800 72px system-ui, sans-serif';
+    ctx.fillText(String(Math.ceil(left) || 1), W / 2, H * 0.45);
+    ctx.font = 'bold 16px system-ui, sans-serif';
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText('다 같이 출발 준비!', W / 2, H * 0.45 + 36);
   }
 
   // 피버 안내: 상단 점수 표시와 겹치지 않게 그 아래 가운데에 표시
@@ -1862,6 +2190,7 @@ const VERSION = '2026-10-26.39';
   // 게임 오버 문구(캔버스)와 랭킹 패널(HTML)이 겹치지 않게 배치하고 문구 위치 {x, y} 를 돌려줌
   // - 기본: 문구 아래(y + 58)에 패널. 화면이 낮으면 문구를 올리고 패널은 스크롤
   // - 낮은 가로 화면: 2단. 왼쪽에 문구 + 이름 입력, 오른쪽에 랭킹 목록
+  // - 같이 하기 방 패널(왼쪽 위)이 있으면 그 아래(기본) 또는 그 오른쪽(2단)에 배치
   let overLayoutKey = '';
   function isSplit(W, H) {
     return W > H && H < 560;
@@ -1872,22 +2201,30 @@ const VERSION = '2026-10-26.39';
     const extra = cleared ? 28 : 0; // 만점 축하 문구로 늘어난 높이
     let x = W / 2, y;
     let key;
+    const roomBox = roomEl.hidden ? null : roomEl.getBoundingClientRect();
+    let sideW = ''; // 비우면 CSS 기본 폭
     if (split) {
       x = Math.round(W * 0.27);
+      if (roomBox) {
+        const left = roomBox.right + 12, right = W - 16 - Math.min(320, W * 0.46);
+        x = Math.round(Math.max(x, (left + right) / 2));
+        sideW = `${Math.round(Math.min(300, right - left - 8))}px`;
+      }
       y = Math.round(Math.max(72, H * 0.3));
-      key = `s${x},${y},${H},${rankEl.hidden},${extra}`;
+      key = `s${x},${y},${H},${rankEl.hidden},${extra},${sideW}`;
       if (key !== overLayoutKey) {
         rankEl.classList.add('split');
         if (rankForm.parentNode !== rankSide) rankSide.append(rankForm);
         rankEl.style.top = '12px';
         rankEl.style.maxHeight = `${H - 24}px`;
         rankSide.style.left = `${x}px`;
+        rankSide.style.width = sideW;
         rankSide.style.top = `${y + 58 + extra}px`;
         rankSide.hidden = rankEl.hidden;
       }
     } else {
       const panelH = rankEl.hidden ? 0 : rankEl.scrollHeight;
-      y = Math.round(Math.max(48, Math.min(H * 0.3, H - panelH - 70 - extra)));
+      y = Math.round(Math.max(roomBox ? roomBox.bottom + 40 : 48, Math.min(H * 0.3, H - panelH - 70 - extra)));
       key = `n${y},${H},${rankEl.hidden},${extra}`;
       if (key !== overLayoutKey) {
         rankEl.classList.remove('split');
@@ -1912,6 +2249,7 @@ const VERSION = '2026-10-26.39';
     drawParticles('spark');
     drawPopups();
     drawHUD();
+    if (countdownAt) drawCountdown(SW, SH);
   }
 
   let last = performance.now();
@@ -1919,6 +2257,8 @@ const VERSION = '2026-10-26.39';
     const dt = Math.min(0.033, (now - last) / 1000);
     last = now;
     if (!paused) update(dt);
+    roomTick(now);
+    syncMpButton();
     draw();
     requestAnimationFrame(loop);
   }
