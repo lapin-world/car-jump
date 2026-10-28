@@ -64,7 +64,7 @@
   #rank-side[hidden] { display: none; }
   /* 일시정지 버튼: 게임 중에만 왼쪽 위에 표시 */
   #pause-btn {
-    position: fixed; left: max(12px, env(safe-area-inset-left)); top: max(12px, env(safe-area-inset-top));
+    position: fixed; left: max(12px, env(safe-area-inset-left)); top: calc(var(--top, 0px) + max(12px, env(safe-area-inset-top)));
     width: 40px; height: 40px; border-radius: 50%; border: 1px solid rgba(148,163,184,0.4);
     background: rgba(15,23,42,0.6); color: #f8fafc; font: 600 16px system-ui, sans-serif; padding: 0;
   }
@@ -105,7 +105,7 @@
   #mp button.sub, #room button.sub { background: #334155; color: #f8fafc; }
   #mp .msg { min-height: 18px; margin: 4px 0 10px; color: #94a3b8; }
   #room {
-    position: fixed; left: max(12px, env(safe-area-inset-left)); top: max(60px, calc(env(safe-area-inset-top) + 48px));
+    position: fixed; left: max(12px, env(safe-area-inset-left)); top: calc(var(--top, 0px) + max(60px, calc(env(safe-area-inset-top) + 48px)));
     width: 200px; box-sizing: border-box; padding: 8px 10px; border: 1px solid rgba(148,197,255,0.3); border-radius: 12px;
     background: rgba(15,23,42,0.75); color: #f8fafc; font: 13px system-ui, sans-serif;
   }
@@ -160,7 +160,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.40';
+const VERSION = '2026-10-28.41';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -259,6 +259,9 @@ const VERSION = '2026-10-28.40';
   const VIEW_MIN_H = 660;
   let W = 0, H = 0, groundY = 0;  // 게임 월드(논리) 크기
   let SW = 0, SH = 0, viewScale = 1, dpr = 1; // 실제 화면 크기와 축소 배율
+  // 같이 하기: 화면 위쪽 topInset(px)에 상대 화면을 그리고 내 게임은 그 아래에 그림.
+  // originX/Y 는 지금 그리는 게임 화면의 왼쪽 위 (기기 픽셀). 화면 픽셀에 맞춰 그리는 함수(fillPlaid 등)가 사용
+  let topInset = 0, originX = 0, originY = 0;
   let state = 'ready'; // ready | playing | over
   let speed, distance, score, best, obstacles, spawnTimer, particles, flips, popups, combo, carsPassed, level, burst;
   let holding = false; // 점프 버튼을 누르고 있는지
@@ -276,9 +279,12 @@ const VERSION = '2026-10-28.40';
   function resize() {
     dpr = window.devicePixelRatio || 1;
     SW = window.innerWidth;
-    SH = window.innerHeight;
+    // 상대가 있는 방이면 화면 높이의 1/4 을 상대 화면 줄로 씀
+    topInset = room && room.players.size > 1 ? Math.round(window.innerHeight / 4) : 0;
+    document.documentElement.style.setProperty('--top', `${topInset}px`);
+    SH = window.innerHeight - topInset;
     canvas.width = SW * dpr;
-    canvas.height = SH * dpr;
+    canvas.height = window.innerHeight * dpr;
     viewScale = Math.min(1, SW / VIEW_MIN_W, SH / VIEW_MIN_H);
     W = SW / viewScale;
     H = SH / viewScale;
@@ -913,12 +919,15 @@ const VERSION = '2026-10-28.40';
   });
 
   // ---------- 같이 하기 (멀티플레이, Supabase Realtime) ----------
-  // 방 코드 = Realtime 채널 이름. 접속자 목록은 Presence, 시작 신호·점수는 Broadcast 로 주고받음.
-  // 각자 자기 게임(차량 배치도 각자 랜덤)을 하면서 서로의 점수를 실시간으로 보는 대전 방식
+  // 방 코드 = Realtime 채널 이름. 접속자 목록은 Presence, 시작 신호·게임 화면 상태는 Broadcast 로 주고받음.
+  // 각자 자기 게임(차량 배치도 각자 랜덤)을 하면서, 화면 위쪽 1/4 에 상대들의 게임 화면을 실시간으로 보여 줌
   const ROOM_MAX = 4;
   const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 헷갈리는 0·O·1·I 제외
   const COUNTDOWN = 3;      // 시작 신호 후 출발까지(초)
-  const SCORE_SEND = 0.4;   // 점수 전송 최소 간격(초)
+  // 게임 화면 상태 전송 간격(초). 받는 쪽은 그 사이를 속도·중력으로 예측해 부드럽게 그림
+  // (Supabase Realtime 메시지 한도를 넘지 않게 초당 약 6번)
+  const FRAME_SEND = 0.16;
+  const MINI_H = 520, MINI_GROUND = 440; // 상대 화면의 논리 높이·도로 위치 (긴 점프·터널이 들어가는 높이)
   const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.99.3/dist/umd/supabase.js';
   const mpOpen = document.getElementById('mp-open');
   const mpDialog = document.getElementById('mp');
@@ -932,7 +941,7 @@ const VERSION = '2026-10-28.40';
   const myId = Math.random().toString(36).slice(2, 10);
   let room = null;          // { code, ch, players: Map(id → { id, name, joined, score, status, t }), host }
   let countdownAt = 0;      // 출발 시각 (performance.now 기준), 0 이면 카운트다운 없음
-  let sentScore = -1, sentAt = 0, sendSeq = 0, roomRenderKey = '';
+  let sentAt = 0, sendSeq = 0, roomRenderKey = '';
   let sbClient = null;
 
   function loadSupabase() {
@@ -967,8 +976,30 @@ const VERSION = '2026-10-28.40';
   // 받은 정보가 더 최신(t 가 큼)일 때만 반영
   function mergePlayer(p) {
     const cur = room.players.get(p.id);
-    if (!cur) return;
-    if (p.t >= (cur.t || 0)) Object.assign(cur, { score: p.score, status: p.status, t: p.t });
+    if (!cur || p.t < (cur.t || 0)) return;
+    Object.assign(cur, { score: p.score, status: p.status, t: p.t });
+    if (p.f) { cur.frame = p.f; cur.frameAt = performance.now(); }
+  }
+
+  // 상대 화면을 그리기 위한 내 게임 상태 (위치는 내 차 기준 상대 좌표)
+  function snapshot() {
+    const px = player.x;
+    const r1 = (v) => Math.round(v), r2 = (v) => Math.round(v * 100) / 100;
+    return {
+      d: r1(distance), s: r1(speed),
+      p: [r1(player.y), r1(player.vy), r2(player.roll), r2(player.airTime), player.onGround ? 1 : 0, player.mode || '', r2(clock - player.lastTap)],
+      o: obstacles.filter((o) => o.x - px < 1800).map((o) => o.rival
+        ? [-1, r1(o.x - px), r1(o.jumpAt - px), r1(o.land - px), r2(o.t), o.landed ? 1 : 0]
+        : [OBSTACLE_TYPES.indexOf(o.type), r1(o.x - px)]),
+      tn: tunnel ? [r1(tunnel.x - px), r1(tunnel.len)] : 0,
+    };
+  }
+
+  function sendFrame() {
+    const p = { ...myStatus(), f: snapshot() };
+    room.ch.send({ type: 'broadcast', event: 'frame', payload: p });
+    sentAt = clock;
+    mergePlayer(p);
   }
 
   async function joinRoom(code) {
@@ -991,12 +1022,11 @@ const VERSION = '2026-10-28.40';
     const r = { code, ch, players: new Map(), host: null, me: { name, joined: Date.now() } };
     ch.on('presence', { event: 'sync' }, () => onPresence(r))
       .on('broadcast', { event: 'start' }, () => { if (room === r) startCountdown(); })
-      .on('broadcast', { event: 'score' }, ({ payload }) => { if (room === r) { mergePlayer(payload); renderRoom(); } })
+      .on('broadcast', { event: 'frame' }, ({ payload }) => { if (room === r) { mergePlayer(payload); renderRoom(); } })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           if (room && room !== r) return;
           room = r;
-          sentScore = -1;
           await ch.track({ name, joined: r.me.joined, ...myStatus() });
           closeMp();
           history.replaceState(null, '', `${location.pathname}?room=${code}`);
@@ -1021,7 +1051,8 @@ const VERSION = '2026-10-28.40';
     }
     r.players = new Map(list.slice(0, ROOM_MAX).map((p) => {
       const old = prev.get(p.id);
-      return [p.id, old && old.t > p.t ? { ...p, score: old.score, status: old.status, t: old.t } : p];
+      if (!old) return [p.id, p];
+      return [p.id, { ...p, frame: old.frame, frameAt: old.frameAt, ...(old.t > p.t ? { score: old.score, status: old.status, t: old.t } : {}) }];
     }));
     r.host = list[0] && list[0].id;
     if (room === r) renderRoom();
@@ -1034,22 +1065,19 @@ const VERSION = '2026-10-28.40';
     countdownAt = 0;
     roomEl.hidden = true;
     roomRenderKey = '';
+    relayout();
     history.replaceState(null, '', location.pathname);
   }
 
   // 시작/게임 오버 때 상태를 Presence 에도 남겨 나중에 들어온 사람도 볼 수 있게 함
   function roomStatus() {
     if (!room) return;
-    const p = myStatus();
-    room.ch.track({ name: room.me.name, joined: room.me.joined, ...p });
-    room.ch.send({ type: 'broadcast', event: 'score', payload: p });
-    sentScore = p.score;
-    sentAt = clock;
-    mergePlayer(p);
+    room.ch.track({ name: room.me.name, joined: room.me.joined, ...myStatus() });
+    sendFrame();
     renderRoom();
   }
 
-  // 게임 중 점수가 바뀌면 SCORE_SEND 초에 한 번 이하로 전송 (매 프레임 호출)
+  // 게임 중에는 FRAME_SEND 초마다 화면 상태 전송 (매 프레임 호출)
   function roomTick(now) {
     if (!room) return;
     if (countdownAt && now >= countdownAt) {
@@ -1057,14 +1085,127 @@ const VERSION = '2026-10-28.40';
       setPaused(false);
       startGame();
     }
-    if (state === 'playing' && score !== sentScore && clock - sentAt >= SCORE_SEND) {
-      const p = myStatus();
-      room.ch.send({ type: 'broadcast', event: 'score', payload: p });
-      sentScore = p.score;
-      sentAt = clock;
-      mergePlayer(p);
+    if (state === 'playing' && !paused && clock - sentAt >= FRAME_SEND) {
+      sendFrame();
       renderRoom();
     }
+  }
+
+  // 상대가 생기거나 모두 나가면 화면 위쪽 상대 화면 줄을 넣거나 빼고 다시 배치
+  function relayout() {
+    resize();
+    plaidCache = {};
+    overLayoutKey = '';
+  }
+
+  // 받은 상태 + 받은 뒤 지난 시간(dt)만큼 예측해서 그리기용 월드(전역 변수)를 채움
+  function setRemoteWorld(rp, now) {
+    const f = rp.frame;
+    const dt = f && rp.status === 'playing' ? Math.min(0.5, (now - rp.frameAt) / 1000) : 0;
+    const sp = f ? f.s : START_SPEED;
+    const px = Math.max(90, W * 0.2);
+    speed = sp;
+    distance = (f ? f.d : 0) + sp * dt;
+    if (!f) {
+      player = { x: px, y: 0, vy: 0, roll: 0, airTime: 0, onGround: true, mode: null, lastTap: clock, wheel: 0 };
+      obstacles = [];
+      tunnel = null;
+      return;
+    }
+    let [y, vy, roll, air, ground, mode, since] = f.p;
+    if (!ground && !mode) {
+      air += dt;
+      y += vy * dt - GRAVITY * dt * dt / 2;
+      vy -= GRAVITY * dt;
+      const p = Math.min(1, air / airDuration());
+      roll = Math.PI * 2 * ROLLS_PER_JUMP * (p - Math.sin(2 * Math.PI * p) / (2 * Math.PI));
+      if (y <= 0) { y = 0; vy = 0; roll = 0; ground = 1; }
+    }
+    player = { x: px, y, vy, roll, airTime: air, onGround: !!ground, mode: mode || null, lastTap: clock - since - dt, wheel: distance / 14 };
+    obstacles = f.o.map(([ti, rx, jump, land, t, landed]) => {
+      if (ti >= 0) {
+        const type = OBSTACLE_TYPES[ti];
+        return { type, w: type.w, h: type.h, x: px + rx - sp * dt };
+      }
+      const o = { type: RIVAL, w: RIVAL.w, h: RIVAL.h, rival: true, peak: OVER_HOP, t, p: 0, hop: 0, roll: 0, pitch: 0, landed: !!landed, wheel: distance / 14, x: px + rx - sp * dt };
+      if (t >= 0 && !landed) {
+        const tt = t + dt, p = Math.min(1, tt / ROLL_TIME);
+        o.t = tt;
+        o.p = p;
+        if (p < 1) {
+          o.x = px + jump + (land - jump) * p;
+          o.hop = 4 * OVER_HOP * p * (1 - p);
+          o.roll = Math.PI * 2 * (p - Math.sin(2 * Math.PI * p) / (2 * Math.PI));
+          o.pitch = Math.atan2(4 * OVER_HOP * (1 - 2 * p) / ROLL_TIME, sp) * 0.35;
+        } else {
+          o.landed = true;
+          o.x = px + land - sp * (tt - ROLL_TIME);
+        }
+      }
+      return o;
+    });
+    tunnel = f.tn ? { x: px + f.tn[0] - sp * dt, len: f.tn[1] } : null;
+  }
+
+  // 화면 위쪽 topInset 높이에 상대 수만큼 가로로 균등하게 나눠 상대 게임 화면을 그림
+  function drawRivalViews() {
+    const others = [...room.players.values()].filter((p) => p.id !== myId);
+    if (!others.length) return;
+    const saved = { W, H, groundY, viewScale, distance, player, obstacles, tunnel, speed };
+    const now = performance.now();
+    const cw = SW / others.length, chH = topInset;
+    const s = chH / MINI_H;
+    others.forEach((rp, i) => {
+      const x0 = Math.round(i * cw), w = Math.round((i + 1) * cw) - x0;
+      viewScale = s;
+      W = w / s;
+      H = MINI_H;
+      groundY = MINI_GROUND;
+      originX = x0 * dpr;
+      originY = 0;
+      setRemoteWorld(rp, now);
+      ctx.save();
+      ctx.setTransform(dpr * s, 0, 0, dpr * s, originX, 0);
+      ctx.beginPath();
+      ctx.rect(0, 0, W, H);
+      ctx.clip();
+      drawBackground();
+      drawTunnelBack();
+      for (const o of obstacles) drawObstacle(o);
+      drawRoadster();
+      drawTunnelFront();
+      ctx.restore();
+
+      // 이름·점수·상태 (화면 픽셀 기준)
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (rp.status !== 'playing') {
+        ctx.fillStyle = 'rgba(2,6,23,0.55)';
+        ctx.fillRect(x0, 0, w, chH);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = rp.status === 'over' ? '#ef4444' : '#cbd5e1';
+        ctx.font = `bold ${Math.min(22, Math.max(13, chH / 8))}px system-ui, sans-serif`;
+        ctx.fillText(rp.status === 'over' ? 'CRASH!' : '대기 중', x0 + w / 2, chH / 2 + 6);
+      }
+      ctx.font = 'bold 13px system-ui, sans-serif';
+      const label = `${rp.id === room.host ? '👑 ' : ''}${rp.name}`;
+      const scoreText = String(rp.score || 0);
+      ctx.fillStyle = 'rgba(2,6,23,0.6)';
+      ctx.fillRect(x0, 0, w, 22);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#f8fafc';
+      const scoreW = ctx.measureText(scoreText).width;
+      let name = label;
+      while (name.length > 1 && ctx.measureText(name).width > w - scoreW - 22) name = name.slice(0, -1);
+      ctx.fillText(name === label ? name : `${name}…`, x0 + 6, 16);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText(scoreText, x0 + w - 6, 16);
+      // 칸 구분선·아래 경계선
+      ctx.fillStyle = 'rgba(148,163,184,0.5)';
+      if (i) ctx.fillRect(x0, 0, 1, chH);
+      if (i === others.length - 1) ctx.fillRect(0, chH - 1, SW, 1);
+    });
+    ({ W, H, groundY, viewScale, distance, player, obstacles, tunnel, speed } = saved);
   }
 
   function startCountdown() {
@@ -1080,6 +1221,7 @@ const VERSION = '2026-10-28.40';
 
   function renderRoom() {
     if (!room) return;
+    if ((room.players.size > 1 ? Math.round(window.innerHeight / 4) : 0) !== topInset) relayout();
     const players = [...room.players.values()];
     const playing = state === 'playing' || countdownAt;
     // 게임을 시작한 뒤에는 점수 순, 대기 중에는 들어온 순
@@ -1089,10 +1231,11 @@ const VERSION = '2026-10-28.40';
       : playing ? ''
       : host ? (canStart() ? '모두 모이면 시작을 눌러 주세요' : '다른 사람이 끝날 때까지 기다려요')
       : '방장이 시작하면 같이 출발해요';
-    const key = JSON.stringify([players.map((p) => [p.id, p.name, p.score, p.status]), room.host, playing, msg, canStart()]);
+    const key = JSON.stringify([players.map((p) => [p.id, p.name, p.score, p.status]), room.host, playing, msg, canStart(), topInset]);
     if (key === roomRenderKey) return;
     roomRenderKey = key;
-    roomEl.hidden = false;
+    // 게임 중 상대 화면 줄이 있으면 점수는 거기서 보이므로 방 패널은 숨겨 내 화면을 가리지 않게 함
+    roomEl.hidden = !!playing && topInset > 0;
     roomEl.classList.toggle('playing', !!playing);
     document.getElementById('room-code').textContent = `방 ${room.code}`;
     document.getElementById('room-count').textContent = `${room.players.size}/${ROOM_MAX}`;
@@ -1845,7 +1988,7 @@ const VERSION = '2026-10-28.40';
     const f = viewScale * dpr;
     const dx = Math.round(ox * f), dy = Math.round(oy * f);
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, dx, dy);
+    ctx.setTransform(1, 0, 0, 1, dx + originX, dy + originY);
     ctx.fillStyle = plaid(scale, wall);
     ctx.fillRect(x * f - dx, y * f - dy, w * f, h * f);
     ctx.restore();
@@ -1904,7 +2047,7 @@ const VERSION = '2026-10-28.40';
     ctx.save();
     ctx.globalAlpha = 0.35;
     // y = groundY 기준 상하 반전: 무늬 원점(천장)이 거울 위치(2 * groundY - 천장)로 감
-    ctx.setTransform(1, 0, 0, -1, dx, Math.round((groundY + TUNNEL_CEIL) * f));
+    ctx.setTransform(1, 0, 0, -1, dx + originX, Math.round((groundY + TUNNEL_CEIL) * f) + originY);
     ctx.fillStyle = plaid(1, true);
     ctx.fillRect(x1 * f - dx, (TUNNEL_CEIL - R) * f, w * f, R * f);
     ctx.restore();
@@ -2064,7 +2207,7 @@ const VERSION = '2026-10-28.40';
 
   // HUD는 축소 없이 실제 화면 크기 기준으로 그림 (세로 화면에서도 글자 크기 유지)
   function drawHUD() {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, topInset * dpr);
     const W = SW, H = SH;
     // 2단 게임 오버 화면에서는 오른쪽 위를 랭킹 패널이 쓰므로 점수는 왼쪽 문구 위에 표시
     const splitOver = state === 'over' && isSplit(W, H);
@@ -2211,26 +2354,26 @@ const VERSION = '2026-10-28.40';
         sideW = `${Math.round(Math.min(300, right - left - 8))}px`;
       }
       y = Math.round(Math.max(72, H * 0.3));
-      key = `s${x},${y},${H},${rankEl.hidden},${extra},${sideW}`;
+      key = `s${x},${y},${H},${rankEl.hidden},${extra},${sideW},${topInset}`;
       if (key !== overLayoutKey) {
         rankEl.classList.add('split');
         if (rankForm.parentNode !== rankSide) rankSide.append(rankForm);
-        rankEl.style.top = '12px';
+        rankEl.style.top = `${topInset + 12}px`;
         rankEl.style.maxHeight = `${H - 24}px`;
         rankSide.style.left = `${x}px`;
         rankSide.style.width = sideW;
-        rankSide.style.top = `${y + 58 + extra}px`;
+        rankSide.style.top = `${topInset + y + 58 + extra}px`;
         rankSide.hidden = rankEl.hidden;
       }
     } else {
       const panelH = rankEl.hidden ? 0 : rankEl.scrollHeight;
-      y = Math.round(Math.max(roomBox ? roomBox.bottom + 40 : 48, Math.min(H * 0.3, H - panelH - 70 - extra)));
-      key = `n${y},${H},${rankEl.hidden},${extra}`;
+      y = Math.round(Math.max(roomBox ? roomBox.bottom - topInset + 40 : 48, Math.min(H * 0.3, H - panelH - 70 - extra)));
+      key = `n${y},${H},${rankEl.hidden},${extra},${topInset}`;
       if (key !== overLayoutKey) {
         rankEl.classList.remove('split');
         if (rankForm.parentNode !== rankEl) rankEl.prepend(rankForm);
         rankSide.hidden = true;
-        rankEl.style.top = `${y + 58 + extra}px`;
+        rankEl.style.top = `${topInset + y + 58 + extra}px`;
         rankEl.style.maxHeight = `${Math.max(120, H - y - 70 - extra)}px`;
       }
     }
@@ -2239,7 +2382,10 @@ const VERSION = '2026-10-28.40';
   }
 
   function draw() {
-    ctx.setTransform(dpr * viewScale, 0, 0, dpr * viewScale, 0, 0);
+    if (topInset) drawRivalViews();
+    originX = 0;
+    originY = topInset * dpr;
+    ctx.setTransform(dpr * viewScale, 0, 0, dpr * viewScale, originX, originY);
     drawBackground();
     drawTunnelBack();
     for (const o of obstacles) drawObstacle(o);
@@ -2263,7 +2409,7 @@ const VERSION = '2026-10-28.40';
     requestAnimationFrame(loop);
   }
 
-  window.addEventListener('resize', () => { resize(); buildSprites(); plaidCache = {}; });
+  window.addEventListener('resize', () => { resize(); buildSprites(); plaidCache = {}; overLayoutKey = ''; });
   resize();
   buildSprites();
   reset();
