@@ -1,0 +1,13 @@
+{
+  "name": "car-jump-integration-tests",
+  "private": true,
+  "description": "같이 하기(멀티플레이) 통합 테스트: 여러 방 · 많은 사용자 · 실제 게임 진행",
+  "scripts": {
+    "test": "node run-all.js",
+    "tune-bot": "node tune-bot.js"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0",
+    "ws": "8.18.0"
+  }
+}
