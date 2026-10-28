@@ -93,6 +93,22 @@
     border: 1px solid rgba(251,191,36,0.7); background: rgba(15,23,42,0.8); color: #fbbf24;
   }
   #mode button.solo { background: #fbbf24; color: #111827; }
+  /* 열린 방 목록 */
+  #mp .rooms-title { margin: 4px 0 6px; color: #cbd5e1; font-weight: 600; }
+  #mp-rooms { list-style: none; margin: 0 0 10px; padding: 0; max-height: min(240px, 40vh); overflow-y: auto; }
+  #mp-rooms li + li { margin-top: 6px; }
+  #mp-rooms button.room {
+    display: flex; width: 100%; align-items: center; gap: 8px; text-align: left;
+    background: #1e293b; color: #f8fafc; border: 1px solid #334155; font-weight: 400;
+  }
+  #mp-rooms .info { flex: 1; min-width: 0; }
+  #mp-rooms .title, #mp-rooms .host { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #mp-rooms .title { font-weight: 700; }
+  #mp-rooms .host { color: #94a3b8; font-size: 12px; }
+  #mp-rooms .count { font-variant-numeric: tabular-nums; font-weight: 700; color: #fbbf24; }
+  #mp-rooms .state { font-size: 12px; color: #94a3b8; }
+  #mp-rooms .empty { color: #94a3b8; padding: 8px 0; }
+  #room .code { color: #94a3b8; font-size: 12px; margin-bottom: 4px; }
   #mp .who { display: flex; justify-content: space-between; align-items: center; margin: 0 0 10px; color: #cbd5e1; }
   #room [hidden] { display: none !important; } /* .btns 의 display:flex 보다 우선 */
   #mp {
@@ -121,7 +137,8 @@
     background: rgba(15,23,42,0.75); color: #f8fafc; font: 13px system-ui, sans-serif;
   }
   #room.playing { pointer-events: none; background: rgba(15,23,42,0.45); } /* 게임 중에는 탭이 점프로 전달되게 */
-  #room .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-weight: 700; }
+  #room .head { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-weight: 700; }
+  #room .head .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #room ol { list-style: none; margin: 0; padding: 0; }
   #room li { display: flex; gap: 6px; padding: 2px 0; }
   #room li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -161,8 +178,10 @@
     <div id="mp-step2" hidden>
       <p class="who"><span>이름: <b id="mp-who"></b></span><button id="mp-rename" class="sub" type="button">변경</button></p>
       <div class="row"><button id="mp-create" type="button" style="flex:1">방 만들기</button></div>
+      <p class="rooms-title">열린 방 (눌러서 입장)</p>
+      <ol id="mp-rooms"></ol>
       <div class="row">
-        <input id="mp-code" maxlength="4" placeholder="방 코드 4자리" autocomplete="off" autocapitalize="characters">
+        <input id="mp-code" maxlength="4" placeholder="방 코드로 참여 (선택)" autocomplete="off" autocapitalize="characters">
         <button id="mp-join" type="button">참여</button>
       </div>
     </div>
@@ -171,7 +190,8 @@
   </div>
 </div>
 <div id="room" hidden>
-  <div class="head"><span id="room-code"></span><span id="room-count"></span></div>
+  <div class="head"><span id="room-title" class="name"></span><span id="room-count"></span></div>
+  <div class="code" id="room-code"></div>
   <ol id="room-list"></ol>
   <div class="btns" id="room-btns">
     <button id="room-start" type="button">시작</button>
@@ -182,7 +202,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.43';
+const VERSION = '2026-10-28.44';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -996,6 +1016,100 @@ const VERSION = '2026-10-28.43';
 
   // 같이 하기 창: 항상 이름 입력(1단계)부터. code 가 있으면(초대 링크) 이름 입력 후 바로 그 방에 참여
   let pendingCode = '';
+  async function ensureClient() {
+    await loadSupabase();
+    sbClient = sbClient || window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  }
+
+  // 방 제목: 방 코드로 정해지는 자동 이름 (방장이 바뀌어도 그대로)
+  const TITLE_A = ['신나는', '빠른', '용감한', '반짝이는', '졸린', '배고픈', '행복한', '수상한', '전설의', '번개같은', '느긋한', '날쌘'];
+  const TITLE_B = ['택시', '로드스터', '사이버트럭', '하이퍼루프', '점프왕', '드라이버', '질주단', '고속도로', '야간 레이서', '배럴롤'];
+  function roomTitle(code) {
+    let h = 0;
+    for (const c of code) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    return `${TITLE_A[h % TITLE_A.length]} ${TITLE_B[Math.floor(h / TITLE_A.length) % TITLE_B.length]}`;
+  }
+
+  // ---------- 열린 방 목록 (로비) ----------
+  // 모든 방의 방장이 로비 채널 Presence 에 { 방 코드, 방장 이름, 인원, 게임 중 } 을 올려 두고,
+  // 같이 하기 창(2단계)을 연 사람은 로비 채널을 구독해 목록을 보여 줌. DB 테이블 없이 동작
+  const LOBBY = 'car-jump-lobby';
+  let lobbyCh = null, lobbyReady = false, lobbyMeta = '';
+
+  function openLobby() {
+    if (lobbyCh || !sbClient) return;
+    const ch = sbClient.channel(LOBBY, { config: { presence: { key: myId } } });
+    lobbyCh = ch;
+    ch.on('presence', { event: 'sync' }, () => { if (lobbyCh === ch) renderLobby(); })
+      .subscribe((status) => {
+        if (lobbyCh !== ch) return;
+        if (status === 'SUBSCRIBED') { lobbyReady = true; lobbyMeta = ''; lobbySync(); renderLobby(); }
+      });
+  }
+
+  // 같이 하기 창이 닫혀 있고 내가 방장이 아니면 로비 연결을 끊음
+  function closeLobbyIfIdle() {
+    if (!lobbyCh || !mpDialog.hidden || (room && room.host === myId)) return;
+    sbClient.removeChannel(lobbyCh);
+    lobbyCh = null;
+    lobbyReady = false;
+    lobbyMeta = '';
+  }
+
+  // 내가 방장이면 로비에 내 방 정보를 올리고(바뀔 때만), 아니면 내림
+  function lobbySync() {
+    if (room && room.host === myId) openLobby();
+    if (!lobbyCh || !lobbyReady) return;
+    if (room && room.host === myId) {
+      const ps = [...room.players.values()];
+      const meta = { code: room.code, host: room.me.name, n: room.players.size, playing: ps.some((p) => p.status === 'playing') || !!countdownAt };
+      const k = JSON.stringify(meta);
+      if (k !== lobbyMeta) { lobbyMeta = k; lobbyCh.track(meta); }
+    } else if (lobbyMeta) {
+      lobbyMeta = '';
+      lobbyCh.untrack();
+    }
+  }
+
+  function renderLobby() {
+    const list = document.getElementById('mp-rooms');
+    if (!lobbyCh || !lobbyReady) {
+      list.replaceChildren(Object.assign(document.createElement('li'), { className: 'empty', textContent: '방 목록 불러오는 중…' }));
+      return;
+    }
+    // 방장이 바뀌는 순간 같은 방이 두 번 보일 수 있어 코드별로 하나만 (인원이 많은 쪽)
+    const byCode = new Map();
+    for (const metas of Object.values(lobbyCh.presenceState())) {
+      const m = metas[metas.length - 1];
+      if (!m.code || (room && m.code === room.code)) continue;
+      const cur = byCode.get(m.code);
+      if (!cur || m.n > cur.n) byCode.set(m.code, m);
+    }
+    const rooms = [...byCode.values()].sort((a, b) => a.playing - b.playing || (a.n >= ROOM_MAX) - (b.n >= ROOM_MAX) || b.n - a.n);
+    if (!rooms.length) {
+      list.replaceChildren(Object.assign(document.createElement('li'), { className: 'empty', textContent: '열린 방이 없어요. 방을 만들어 보세요!' }));
+      return;
+    }
+    list.replaceChildren(...rooms.map((m) => {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'room';
+      const full = m.n >= ROOM_MAX;
+      b.disabled = full;
+      const info = document.createElement('span'); info.className = 'info';
+      const t = document.createElement('span'); t.className = 'title'; t.textContent = roomTitle(m.code);
+      const h = document.createElement('span'); h.className = 'host'; h.textContent = `👑 ${m.host}`;
+      info.append(t, h);
+      const st = document.createElement('span'); st.className = 'state'; st.textContent = full ? '가득 참' : m.playing ? '게임 중' : '대기 중';
+      const c = document.createElement('span'); c.className = 'count'; c.textContent = `${m.n}/${ROOM_MAX}`;
+      b.append(info, st, c);
+      b.addEventListener('click', () => joinRoom(m.code));
+      li.append(b);
+      return li;
+    }));
+  }
+
   function openMp(code = '') {
     try { mpName.value = mpName.value || localStorage.getItem('roadster-name') || ''; } catch {}
     pendingCode = code;
@@ -1023,14 +1137,16 @@ const VERSION = '2026-10-28.43';
     if (pendingCode) {
       pendingCode = '';
       joinRoom(mpCode.value);
-    } else {
-      mpCode.focus();
+      return;
     }
+    renderLobby();
+    ensureClient().then(() => { if (!mpDialog.hidden) openLobby(); }, () => { mpMsg.textContent = '연결 모듈을 불러오지 못했어요'; });
   }
 
   function closeMp() {
     mpDialog.hidden = true;
     document.activeElement.blur();
+    closeLobbyIfIdle();
   }
 
   function myStatus() {
@@ -1075,8 +1191,7 @@ const VERSION = '2026-10-28.43';
     mpMsg.textContent = '연결 중…';
     for (const b of mpDialog.querySelectorAll('button')) b.disabled = true;
     try {
-      await loadSupabase();
-      sbClient = sbClient || window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+      await ensureClient();
     } catch {
       mpMsg.textContent = '연결 모듈을 불러오지 못했어요';
       for (const b of mpDialog.querySelectorAll('button')) b.disabled = false;
@@ -1129,6 +1244,8 @@ const VERSION = '2026-10-28.43';
     countdownAt = 0;
     roomEl.hidden = true;
     roomRenderKey = '';
+    lobbySync();
+    closeLobbyIfIdle();
     relayout();
     history.replaceState(null, '', location.pathname);
   }
@@ -1334,6 +1451,8 @@ const VERSION = '2026-10-28.43';
   function renderRoom() {
     if (!room) return;
     if ((room.players.size > 1 ? Math.round(window.innerHeight / 4) : 0) !== topInset) relayout();
+    lobbySync();
+    closeLobbyIfIdle(); // 방장이 넘어가면 로비 연결 정리
     const players = [...room.players.values()];
     const playing = state === 'playing' || countdownAt;
     // 게임을 시작한 뒤에는 점수 순, 대기 중에는 들어온 순
@@ -1349,7 +1468,8 @@ const VERSION = '2026-10-28.43';
     // 게임 중 상대 화면 줄이 있으면 점수는 거기서 보이므로 방 패널은 숨겨 내 화면을 가리지 않게 함
     roomEl.hidden = !!playing && topInset > 0;
     roomEl.classList.toggle('playing', !!playing);
-    document.getElementById('room-code').textContent = `방 ${room.code}`;
+    document.getElementById('room-title').textContent = roomTitle(room.code);
+    document.getElementById('room-code').textContent = `코드 ${room.code}`;
     document.getElementById('room-count').textContent = `${room.players.size}/${ROOM_MAX}`;
     roomList.replaceChildren(...players.map((p) => {
       const li = document.createElement('li');
