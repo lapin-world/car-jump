@@ -40,7 +40,7 @@ const startWith = async (fx, agoSec = fx.replay.n / 240 + 2) => {
   await db.query('update private.games set seed = $2, issued_at = now() - make_interval(secs => $3) where token = $1', [s.token, fx.seed, agoSec]);
   return s;
 };
-const submit = (s, fx, over = {}) => call({ action: 'submit', v: SIM_VERSION, token: s.token, name: '테스터', owner: 'owner-1', captcha: 'x', score: fx.score, replay: fx.replay, ...over });
+const submit = (s, fx, over = {}) => call({ action: 'submit', v: SIM_VERSION, token: s.token, name: '테스터', captcha: 'x', score: fx.score, replay: fx.replay, ...over });
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 const s0 = await call({ action: 'start' });
@@ -114,8 +114,8 @@ check('사람 확인 통과하면 등록', r.result === 'ok', JSON.stringify(r))
 captcha = null;
 
 s = await startWith(fx);
-r = await submit(s, fx, { name: '테스터0', owner: 'someone-else' });
-check('남의 이름 덮어쓰기 거절', r.error === 'name_taken', JSON.stringify(r));
+r = await submit(s, fx, { name: '테스터0' });
+check('같은 이름은 다른 기기에서도 등록 가능', r.result === 'ok', JSON.stringify(r));
 
 const ipRow = await db.query('select ip from private.games where token = $1', [s.token]);
 check('요청한 사람 IP 기록 (x-forwarded-for 첫 값)', ipRow.rows[0].ip === '1.2.3.4', JSON.stringify(ipRow.rows));

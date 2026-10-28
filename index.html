@@ -1078,19 +1078,6 @@ const VERSION = '2026-10-28.55';
     return '랭킹 서버에 연결되지 않아 이번 판은 등록할 수 없어요';
   }
 
-  // 이름 주인 확인용 비밀값: 이 브라우저에서 처음 등록한 이름은 이 값이 있어야 다시 갱신됨 (다른 사람이 덮어쓰기 불가)
-  let ownerFallback = '';
-  function ownerKey() {
-    const make = () => Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
-    try {
-      let k = localStorage.getItem('roadster-owner');
-      if (!k) { k = make(); localStorage.setItem('roadster-owner', k); }
-      return k;
-    } catch {
-      return ownerFallback || (ownerFallback = make());
-    }
-  }
-
   // Cloudflare Turnstile: 등록할 때만 사람 확인 (대부분은 화면에 아무것도 안 뜨고, 의심스러울 때만 체크 상자 표시)
   let tsLoad = null, tsWidget = null, tsWait = null;
   function loadTurnstile() {
@@ -1188,7 +1175,6 @@ const VERSION = '2026-10-28.55';
     captcha: ['사람 확인에 실패했어요. 다시 시도해 주세요', false],
     rate: ['요청이 너무 많아요. 잠시 후 다시 시도해 주세요', false],
     name: ['이름은 1~12자로 써 주세요', false],
-    name_taken: ['다른 기기에서 이미 쓰고 있는 이름이에요. 다른 이름으로 등록해 주세요', false],
   };
 
   // auto: 같이 하기에서 자동 등록 (실패해도 입력 폼 없이 안내만)
@@ -1201,7 +1187,7 @@ const VERSION = '2026-10-28.55';
       const captcha = await captchaToken();
       // 서버가 리플레이로 점수를 다시 계산해 같을 때만 등록. 같은 이름은 최고 점수만 갱신, 'reset' 이면 랭킹 초기화됨
       res = await scoreApi({
-        action: 'submit', v: SIM_VERSION, token: game.token, name, owner: ownerKey(), captcha, score,
+        action: 'submit', v: SIM_VERSION, token: game.token, name, captcha, score,
         replay: { ...replay, n: simSteps },
       });
     } catch (e) {

@@ -1,6 +1,6 @@
 // 랭킹 등록 요청 처리 (Deno Edge Function 과 Node 테스트에서 같이 씀)
 //   { action: 'start' }  → { token, seed, v }  다음 판에 쓸 시드·토큰
-//   { action: 'submit', v, token, name, owner, captcha, score, replay } → { result: 'ok' | 'reset' } 또는 { error }
+//   { action: 'submit', v, token, name, captcha, score, replay } → { result: 'ok' | 'reset' } 또는 { error }
 // deps: rpc(이름, 인자) → DB 함수 결과, verifyCaptcha(토큰, ip) → true/false (사람 확인 안 쓰면 null)
 import { SIM_VERSION, verifyReplay } from '../_shared/sim.js';
 
@@ -38,7 +38,7 @@ export async function handle(req, { rpc, verifyCaptcha }) {
   if (b.action !== 'submit') return json(400, { error: 'action' });
   if (b.v !== SIM_VERSION) return json(400, { error: 'version' });
   if (typeof b.token !== 'string' || !/^[0-9a-f-]{36}$/i.test(b.token)) return json(400, { error: 'invalid' });
-  if (typeof b.name !== 'string' || typeof b.owner !== 'string' || b.owner.length > 200) return json(400, { error: 'name' });
+  if (typeof b.name !== 'string') return json(400, { error: 'name' });
   if (!Number.isInteger(b.score)) return json(400, { error: 'invalid' });
 
   // 사람 확인 (Cloudflare Turnstile) — 시크릿이 설정돼 있을 때만
@@ -55,7 +55,7 @@ export async function handle(req, { rpc, verifyCaptcha }) {
   if (v.score !== b.score) return json(400, { error: 'mismatch' });
 
   const result = await rpc('game_finish', {
-    p_token: b.token, p_ip: ip, p_name: b.name.slice(0, 20), p_owner: b.owner,
+    p_token: b.token, p_ip: ip, p_name: b.name.slice(0, 20),
     p_score: v.score, p_sim_ms: v.simMs, p_replay: b.replay,
   });
   if (result === 'ok' || result === 'reset') return json(200, { result });

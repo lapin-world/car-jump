@@ -50,7 +50,7 @@ try {
   const s = await post({ action: 'start' });
   check('Deno: start', !!s.token && s.v === SIM_VERSION, JSON.stringify(s));
   await db.query("update private.games set seed = $2, issued_at = now() - interval '1 hour' where token = $1", [s.token, fx.seed]);
-  const sub = { action: 'submit', v: SIM_VERSION, token: s.token, name: '데노', owner: 'o', captcha: '', score: fx.score, replay: fx.replay };
+  const sub = { action: 'submit', v: SIM_VERSION, token: s.token, name: '데노', captcha: '', score: fx.score, replay: fx.replay };
   const bad = await post({ ...sub, score: fx.score + 1 });
   check('Deno: 조작 점수 거절', bad.error === 'mismatch', JSON.stringify(bad));
   const ok = await post(sub);

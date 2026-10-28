@@ -29,12 +29,12 @@ create table if not exists private.rate_hits (
 );
 create index if not exists rate_hits_idx on private.rate_hits (ip, kind, at);
 
--- 3) 랭킹 테이블: 숨김(관리자가 조작 기록을 가림) · 이름 주인 · 등록한 게임
+-- 3) 랭킹 테이블: 숨김(관리자가 조작 기록을 가림) · 등록한 게임
+-- 같은 이름은 어느 기기에서든 갱신 가능 (공용 기기·여러 기기에서 같은 이름으로 하는 경우)
 alter table public.scores add column if not exists hidden boolean not null default false;
-alter table public.scores add column if not exists owner_hash text;
 alter table public.scores add column if not exists game_token uuid;
 
--- 브라우저는 숨기지 않은 기록만, 공개 열만 조회 가능 (owner_hash·game_token 은 안 보임). 쓰기는 전부 불가
+-- 브라우저는 숨기지 않은 기록만, 공개 열만 조회 가능 (game_token 은 안 보임). 쓰기는 전부 불가
 drop policy if exists "scores read" on public.scores;
 create policy "scores read" on public.scores for select to anon using (not hidden);
 revoke all on public.scores from anon, authenticated;
@@ -42,6 +42,8 @@ grant select (id, name, score, created_at, hidden) on public.scores to anon;
 
 -- 예전 등록 함수(이름·점수를 그대로 믿던 것)는 삭제
 drop function if exists public.submit_score(text, int);
+-- 이름 주인 확인이 있던 이전 버전 (인자가 달라 따로 삭제)
+drop function if exists public.game_finish(uuid, text, text, text, int, int, jsonb);
 
 -- 요청 제한: p_window 동안 p_limit 번까지. 넘으면 false
 create or replace function private.rate_ok(p_ip text, p_kind text, p_limit int, p_window interval)
@@ -96,9 +98,9 @@ as $$
 $$;
 
 -- 게임 끝: Edge Function 이 리플레이로 확인한 점수를 등록
--- 반환: 'ok' | 'reset' | 오류 코드 (invalid · used · expired · too_fast · rate · name · name_taken)
+-- 반환: 'ok' | 'reset' | 오류 코드 (invalid · used · expired · too_fast · rate · name)
 create or replace function public.game_finish(
-  p_token uuid, p_ip text, p_name text, p_owner text, p_score int, p_sim_ms int, p_replay jsonb)
+  p_token uuid, p_ip text, p_name text, p_score int, p_sim_ms int, p_replay jsonb)
 returns text
 language plpgsql
 security definer
@@ -107,8 +109,6 @@ as $$
 declare
   g private.games;
   v_name text := trim(p_name);
-  v_owner text := encode(extensions.digest(coalesce(p_owner, ''), 'sha256'), 'hex');
-  v_cur public.scores;
 begin
   select * into g from private.games where token = p_token for update;
   if not found then return 'invalid'; end if;
@@ -131,20 +131,13 @@ begin
   if char_length(v_name) not between 1 and 12 then return 'name'; end if;
   if p_score not between 1 and 9999 then return 'invalid'; end if;
 
-  -- 이름 주인 확인: 처음 등록한 브라우저의 비밀값과 같아야 갱신 가능 (예전 기록처럼 주인이 없으면 이번에 주인이 됨)
-  select * into v_cur from public.scores where lower(name) = lower(v_name) for update;
-  if found and v_cur.owner_hash is not null and v_cur.owner_hash <> v_owner then
-    return 'name_taken';
-  end if;
-
   update private.games set used_at = now(), name = v_name, score = p_score, sim_ms = p_sim_ms, replay = p_replay
   where token = p_token;
 
   -- 이름당 1줄, 더 높은 점수일 때만 갱신. 숨긴 이름은 계속 숨김
-  insert into public.scores (name, score, owner_hash, game_token)
-  values (v_name, p_score, v_owner, p_token)
+  insert into public.scores (name, score, game_token)
+  values (v_name, p_score, p_token)
   on conflict ((lower(name))) do update set
-    owner_hash = coalesce(scores.owner_hash, excluded.owner_hash),
     score = greatest(scores.score, excluded.score),
     created_at = case when excluded.score > scores.score then now() else scores.created_at end,
     game_token = case when excluded.score > scores.score then excluded.game_token else scores.game_token end;
@@ -155,10 +148,10 @@ $$;
 revoke all on function private.rate_ok(text, text, int, interval) from public, anon, authenticated;
 revoke all on function public.game_start(text) from public, anon, authenticated;
 revoke all on function public.game_get(uuid) from public, anon, authenticated;
-revoke all on function public.game_finish(uuid, text, text, text, int, int, jsonb) from public, anon, authenticated;
+revoke all on function public.game_finish(uuid, text, text, int, int, jsonb) from public, anon, authenticated;
 grant execute on function public.game_start(text) to service_role;
 grant execute on function public.game_get(uuid) to service_role;
-grant execute on function public.game_finish(uuid, text, text, text, int, int, jsonb) to service_role;
+grant execute on function public.game_finish(uuid, text, text, int, int, jsonb) to service_role;
 
 -- ---------- 관리자용 (SQL Editor 에서 필요할 때) ----------
 -- 조작 의심 기록 숨기기 (이름은 그대로 묶여 있어 같은 이름으로 다시 올라오지 않음):
