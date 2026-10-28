@@ -91,13 +91,34 @@
   /* 시작 화면 모드 선택: 제목 아래 (시작 화면 문구 y = 화면 높이 30% + 84 자리) */
   #mode {
     position: fixed; left: 50%; top: calc(30% + 58px); transform: translateX(-50%);
-    display: flex; gap: 10px; width: min(320px, calc(100vw - 32px));
+    display: flex; flex-wrap: wrap; gap: 10px; width: min(320px, calc(100vw - 32px));
   }
   #mode button {
     flex: 1; padding: 12px 8px; border-radius: 12px; font: 700 16px system-ui, sans-serif;
     border: 1px solid rgba(251,191,36,0.7); background: rgba(15,23,42,0.8); color: #fbbf24;
   }
   #mode button.solo { background: #fbbf24; color: #111827; }
+  #mode button.contest { flex-basis: 100%; padding: 8px; font-size: 14px; border-color: rgba(148,163,184,0.5); color: #cbd5e1; }
+  /* 대회 모드 (?contest=1): 시작 화면에 도전자 이름 입력 + 기록 내보내기. 기록은 이 PC 의 localStorage 에만 저장 */
+  #contest {
+    position: fixed; left: 50%; top: calc(30% + 52px); transform: translateX(-50%);
+    width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 12px;
+    border: 1px solid rgba(251,191,36,0.6); border-radius: 14px; background: rgba(15,23,42,0.9);
+    color: #f8fafc; font: 14px system-ui, sans-serif;
+  }
+  #contest[hidden], #rank-tools[hidden] { display: none; }
+  #contest .title { margin: 0 0 8px; color: #fbbf24; font-weight: 700; text-align: center; }
+  #contest form { display: flex; gap: 8px; }
+  #contest input {
+    flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #475569; border-radius: 8px;
+    background: #0f172a; color: #f8fafc; font: inherit; font-size: 16px; user-select: text; -webkit-user-select: text;
+  }
+  #contest button, #rank-tools button {
+    padding: 8px 12px; border: 0; border-radius: 8px; background: #fbbf24; color: #111827; font: 600 14px system-ui, sans-serif;
+  }
+  #contest .tools, #rank-tools { display: flex; gap: 6px; margin-top: 8px; }
+  #contest .tools button, #rank-tools button { flex: 1; padding: 6px 4px; font-size: 12px; background: #334155; color: #f8fafc; white-space: nowrap; }
+  #contest .msg { min-height: 16px; margin: 6px 0 0; color: #94a3b8; font-size: 12px; }
   /* 아이템전: 화면 왼쪽 아래 아이템 칸 (탭 또는 숫자키 1·2·3 으로 사용) */
   #items {
     position: fixed; left: max(12px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom));
@@ -210,6 +231,24 @@
   <p class="msg" id="rank-msg"></p>
   <div id="rank-captcha"></div>
   <ol id="rank-list"></ol>
+  <div id="rank-tools" hidden>
+    <button class="contest-csv" type="button">⬇ 랭킹 CSV</button>
+    <button class="contest-log" type="button">⬇ 전체 기록 CSV</button>
+  </div>
+</div>
+<div id="contest" hidden>
+  <p class="title">🏆 대회 모드</p>
+  <form id="contest-form">
+    <input id="contest-name" maxlength="12" placeholder="도전자 이름 (최대 12자)" autocomplete="off">
+    <button type="submit">도전 시작</button>
+  </form>
+  <div class="tools">
+    <button class="contest-csv" type="button">⬇ 랭킹 CSV</button>
+    <button class="contest-log" type="button">⬇ 전체 기록 CSV</button>
+    <button id="contest-reset" type="button">초기화</button>
+    <button id="contest-off" type="button">끄기</button>
+  </div>
+  <p class="msg" id="contest-msg"></p>
 </div>
 <div id="rank-side" hidden></div>
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
@@ -222,6 +261,7 @@
 <div id="mode" hidden>
   <button id="mode-solo" class="solo" type="button">🚕 혼자 하기</button>
   <button id="mode-multi" type="button">👥 같이 하기</button>
+  <button id="mode-contest" class="contest" type="button">🏆 대회 모드 (이 기기에만 기록)</button>
 </div>
 <div id="mp" hidden>
   <div class="box">
@@ -270,7 +310,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.56';
+const VERSION = '2026-10-28.57';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -517,6 +557,7 @@ const VERSION = '2026-10-28.56';
       restartHold = clock;
       return;
     }
+    if (contest) return contestStart(); // 대회 모드는 도전자 이름을 넣어야 시작
     startGame();
   }
 
@@ -569,7 +610,7 @@ const VERSION = '2026-10-28.56';
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     simInput('H');
-    if (!modeEl.hidden) return; // 시작 화면에서는 혼자 하기 / 같이 하기 버튼으로 선택 (키보드 Enter/Space 는 혼자 하기)
+    if (!modeEl.hidden || !contestEl.hidden) return; // 시작 화면에서는 혼자 하기 / 같이 하기 버튼으로 선택 (키보드 Enter/Space 는 혼자 하기)
     handleInput();
   });
   window.addEventListener('pointerup', () => { simInput('R'); });
@@ -942,7 +983,8 @@ const VERSION = '2026-10-28.56';
       if (!holding) restartHold = null;
       else if (clock - restartHold >= RESTART_HOLD) {
         restartHold = null;
-        startGame();
+        if (contest) contestNext(); // 대회 모드: 다음 도전자 이름 입력 화면으로
+        else startGame();
       }
     }
     // 바퀴는 항상 시계 방향으로 보이게: 스포크 5개(72° 간격)라 한 프레임에 36° 이상 돌면
@@ -1070,7 +1112,7 @@ const VERSION = '2026-10-28.56';
 
   // 다음 판에 쓸 시드·토큰을 미리 받아 둠 (시작을 누르면 기다리지 않고 바로 출발하도록)
   function fetchSession() {
-    if (session || sessionReq) return;
+    if (contest || session || sessionReq) return; // 대회 모드는 랭킹 서버를 쓰지 않음
     sessionReq = scoreApi({ action: 'start' }).then((d) => {
       if (d.v && d.v !== SIM_VERSION) sessionError = 'version';
       else if (d.token) { session = { token: d.token, seed: d.seed, at: Date.now() }; sessionError = ''; }
@@ -1150,6 +1192,7 @@ const VERSION = '2026-10-28.56';
   }
 
   function showRanking() {
+    if (contest) return showContestRanking();
     submittedScore = false;
     rankForm.querySelector('button').disabled = false;
     try { rankName.value = localStorage.getItem('roadster-name') || ''; } catch {}
@@ -1232,6 +1275,146 @@ const VERSION = '2026-10-28.56';
     }
     rankMsg.textContent = auto ? `랭킹 등록에 실패했어요: ${msg}` : msg;
   }
+
+  // ---------- 대회 모드 (한 PC 에서 도전자별 랭킹) ----------
+  // 누구나 시작 화면의 '대회 모드' 버튼(또는 주소 ?contest=1)으로 켜고, '끄기'(또는 ?contest=0)로 끔. 켠 상태는 이 기기에 기억.
+  // 혼자 하기만 가능하고, 점수는 Supabase 로 보내지 않고 이 브라우저 localStorage 에만 쌓음 (온라인 점수 조작 방지)
+  const CONTEST_KEY = 'roadster-contest';
+  const RECORDS_KEY = 'roadster-contest-records'; // [{ name, score, at }] 모든 도전 기록
+  const contestParam = new URLSearchParams(location.search).get('contest');
+  try {
+    if (contestParam === '1') localStorage.setItem(CONTEST_KEY, '1');
+    else if (contestParam === '0') localStorage.removeItem(CONTEST_KEY);
+  } catch {}
+  let contest = false;
+  try { contest = localStorage.getItem(CONTEST_KEY) === '1'; } catch {}
+  const contestEl = document.getElementById('contest');
+  const contestForm = document.getElementById('contest-form');
+  const contestName = document.getElementById('contest-name');
+  const contestMsg = document.getElementById('contest-msg');
+  const rankTools = document.getElementById('rank-tools');
+  let challenger = ''; // 지금 도전 중인 사람 이름
+
+  function loadRecords() {
+    try {
+      const list = JSON.parse(localStorage.getItem(RECORDS_KEY) || '[]');
+      return Array.isArray(list) ? list.filter((r) => r && typeof r.name === 'string' && Number.isFinite(r.score)) : [];
+    } catch { return []; }
+  }
+
+  // 같은 이름(대소문자 무시)은 한 줄로, 최고 점수만. 같은 점수는 먼저 기록한 사람이 위
+  function contestRanking() {
+    const byName = new Map();
+    for (const r of loadRecords()) {
+      const k = r.name.toLowerCase();
+      const cur = byName.get(k);
+      if (!cur) byName.set(k, { name: r.name, score: r.score, at: r.at, tries: 1 });
+      else {
+        cur.tries++;
+        if (r.score > cur.score || (r.score === cur.score && r.at < cur.at)) Object.assign(cur, { name: r.name, score: r.score, at: r.at });
+      }
+    }
+    return [...byName.values()].sort((a, b) => b.score - a.score || a.at - b.at);
+  }
+
+  function contestStart() {
+    const name = contestName.value.trim().slice(0, 12);
+    if (!name) { contestMsg.textContent = '도전자 이름을 입력해 주세요'; contestName.focus(); return; }
+    challenger = name;
+    contestName.blur();
+    contestMsg.textContent = '';
+    startGame();
+  }
+
+  // 게임 오버 → 다음 도전자 이름 입력 화면 (같은 사람이 다시 하려면 이름 그대로 Enter)
+  function contestNext() {
+    if (pendingVersion && applyUpdate()) return;
+    hideRanking();
+    reset();
+    state = 'ready';
+    contestName.value = challenger;
+  }
+
+  function showContestRanking() {
+    const records = loadRecords();
+    records.push({ name: challenger, score, at: Date.now() });
+    let saved = true;
+    try { localStorage.setItem(RECORDS_KEY, JSON.stringify(records)); } catch { saved = false; }
+    const rows = contestRanking();
+    const me = challenger.toLowerCase();
+    rankForm.hidden = true;
+    rankTools.hidden = false;
+    rankList.replaceChildren(...rows.map((r, i) => {
+      const li = document.createElement('li');
+      if (i < 3) li.classList.add('top', `g${i + 1}`);
+      if (r.name.toLowerCase() === me) li.classList.add('me');
+      const no = document.createElement('span'); no.className = 'no'; no.textContent = ['🥇', '🥈', '🥉'][i] || i + 1;
+      const n = document.createElement('span'); n.className = 'name'; n.textContent = r.name;
+      const v = document.createElement('span'); v.className = 'score'; v.textContent = r.score;
+      li.append(no, n, v);
+      return li;
+    }));
+    const myRank = rows.findIndex((r) => r.name.toLowerCase() === me) + 1;
+    rankMsg.textContent = saved
+      ? `🏆 대회 랭킹 · 도전자 ${rows.length}명 · '${challenger}' ${myRank}등`
+      : '기록을 저장하지 못했어요 (브라우저 저장소를 확인해 주세요)';
+    rankEl.hidden = false;
+    rankEl.scrollTop = 0;
+    const meEl = rankList.querySelector('li.me');
+    if (meEl) requestAnimationFrame(() => meEl.scrollIntoView({ block: 'nearest' }));
+  }
+
+  // 엑셀에서 한글이 깨지지 않게 BOM 을 붙인 CSV 로 저장
+  const csvCell = (v) => { const t = String(v); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  const fmtTime = (ms) => {
+    const d = new Date(ms), p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  };
+  function downloadCsv(filename, header, rows) {
+    const text = '\ufeff' + [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+    a.download = filename;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  const stamp = () => fmtTime(Date.now()).replace(/[-: ]/g, '').replace(/^(\d{8})/, '$1-');
+  function exportRanking() {
+    downloadCsv(`contest-ranking-${stamp()}.csv`, ['순위', '이름', '최고 점수', '도전 횟수', '최고 점수 기록 시각'],
+      contestRanking().map((r, i) => [i + 1, r.name, r.score, r.tries, fmtTime(r.at)]));
+  }
+  function exportLog() {
+    downloadCsv(`contest-records-${stamp()}.csv`, ['번호', '이름', '점수', '기록 시각'],
+      loadRecords().sort((a, b) => a.at - b.at).map((r, i) => [i + 1, r.name, r.score, fmtTime(r.at)]));
+  }
+
+  contestForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (holding) return; // 다음 도전자로 넘어올 때 누르고 있던 Enter 가 바로 시작으로 이어지지 않게
+    contestStart();
+  });
+  for (const b of document.querySelectorAll('.contest-csv')) b.addEventListener('click', (e) => { e.currentTarget.blur(); exportRanking(); });
+  for (const b of document.querySelectorAll('.contest-log')) b.addEventListener('click', (e) => { e.currentTarget.blur(); exportLog(); });
+  document.getElementById('contest-reset').addEventListener('click', (e) => {
+    e.currentTarget.blur();
+    const n = loadRecords().length;
+    if (!n) { contestMsg.textContent = '지울 기록이 없어요'; return; }
+    if (!confirm(`대회 기록 ${n}건을 모두 지우고 새 대회를 시작할까요?`)) return;
+    try { localStorage.removeItem(RECORDS_KEY); } catch {}
+    contestMsg.textContent = '대회 기록을 초기화했어요';
+  });
+
+  // 켜고 끄기: 기록은 지우지 않으므로 다시 켜면 이어서 진행
+  function setContest(on) {
+    contest = on;
+    try { if (on) localStorage.setItem(CONTEST_KEY, '1'); else localStorage.removeItem(CONTEST_KEY); } catch {}
+    contestMsg.textContent = '';
+    if (!on) fetchSession();
+  }
+  document.getElementById('mode-contest').addEventListener('click', (e) => { e.currentTarget.blur(); setContest(true); });
+  document.getElementById('contest-off').addEventListener('click', (e) => { e.currentTarget.blur(); setContest(false); });
 
   fetchSession();
 
@@ -1815,13 +1998,18 @@ const VERSION = '2026-10-28.56';
   const modeEl = document.getElementById('mode');
   function syncMpButton() {
     const free = !room && mpDialog.hidden;
-    const showMode = free && state === 'ready';
-    const showOpen = free && state === 'over';
+    const showMode = free && state === 'ready' && !contest;
+    const showOpen = free && state === 'over' && !contest;
+    const showContest = contest && state === 'ready';
+    if (contestEl.hidden === showContest) {
+      contestEl.hidden = !showContest;
+      if (showContest && !isTouch) { contestName.focus(); contestName.select(); }
+    }
     if (modeEl.hidden === showMode) modeEl.hidden = !showMode;
     if (mpOpen.hidden === showOpen) mpOpen.hidden = !showOpen;
   }
 
-  for (const el of [mpOpen, mpDialog, roomEl, modeEl]) el.addEventListener('pointerdown', (e) => e.stopPropagation());
+  for (const el of [mpOpen, mpDialog, roomEl, modeEl, contestEl]) el.addEventListener('pointerdown', (e) => e.stopPropagation());
   document.getElementById('over-solo').addEventListener('click', (e) => { e.currentTarget.blur(); startGame(); });
   document.getElementById('over-multi').addEventListener('click', (e) => { e.currentTarget.blur(); openMp(); });
   document.getElementById('mode-solo').addEventListener('click', (e) => { e.currentTarget.blur(); startGame(); });
@@ -1854,7 +2042,7 @@ const VERSION = '2026-10-28.56';
 
   // 초대 링크(?room=코드)로 들어오면 참여 창을 바로 띄움
   const inviteCode = (new URLSearchParams(location.search).get('room') || '').toUpperCase().slice(0, 4);
-  if (inviteCode) openMp(inviteCode);
+  if (inviteCode && !contest) openMp(inviteCode); // 대회 PC 에서는 같이 하기를 열지 않음
 
   // ---------- 아이템전 ----------
   // 점수가 ITEM_EVERY 점 오를 때마다 무작위 아이템 1개 (공격·방어 합쳐 최대 ITEM_MAX 개 보관, 꽉 차면 버림).
@@ -3331,7 +3519,8 @@ const VERSION = '2026-10-28.56';
         ry += 30;
       }
       // 같이 하기 방에서는 같은 안내가 방 패널에 있으므로 생략
-      if (!room) ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, ry);
+      if (contest) ctx.fillText(isTouch ? '길게 눌러서 다음 도전자' : 'Enter / Space 길게 눌러 다음 도전자', x, ry);
+      else if (!room) ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, ry);
       // 길게 누르는 동안 진행 막대
       if (restartHold !== null) {
         const t = Math.min(1, (clock - restartHold) / RESTART_HOLD);
