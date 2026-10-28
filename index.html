@@ -77,11 +77,16 @@
   #rank.split li.g1 { padding: 4px 8px; font-size: 15px; }
   #rank.split li.g2, #rank.split li.g3 { font-size: 14px; }
   /* 멀티플레이: 시작 버튼, 방 만들기·참여 창, 방 현황(실시간 점수) 패널 */
+  /* 혼자 한 판이 끝난 게임 오버 화면: 왼쪽 위에 다시 혼자 하기 / 같이 하기 */
   #mp-open {
-    position: fixed; left: max(12px, env(safe-area-inset-left)); top: max(36px, env(safe-area-inset-top));
+    position: fixed; left: max(12px, env(safe-area-inset-left)); top: max(16px, env(safe-area-inset-top));
+    display: flex; gap: 8px;
+  }
+  #mp-open button {
     padding: 8px 12px; border: 1px solid rgba(251,191,36,0.6); border-radius: 10px;
     background: rgba(15,23,42,0.75); color: #fbbf24; font: 600 14px system-ui, sans-serif;
   }
+  #mp-open button.solo { background: #fbbf24; color: #111827; }
   #mp-open[hidden], #mp[hidden], #room[hidden], #mode[hidden], #mp [hidden] { display: none; }
   /* 시작 화면 모드 선택: 제목 아래 (시작 화면 문구 y = 화면 높이 30% + 84 자리) */
   #mode {
@@ -180,7 +185,10 @@
 <div id="rank-side" hidden></div>
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <div id="items" hidden></div>
-<button id="mp-open" type="button" hidden>👥 같이 하기</button>
+<div id="mp-open" hidden>
+  <button id="over-solo" class="solo" type="button">🚕 혼자 하기</button>
+  <button id="over-multi" type="button">👥 같이 하기</button>
+</div>
 <div id="mode" hidden>
   <button id="mode-solo" class="solo" type="button">🚕 혼자 하기</button>
   <button id="mode-multi" type="button">👥 같이 하기</button>
@@ -224,7 +232,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.47';
+const VERSION = '2026-10-28.48';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1545,7 +1553,7 @@ const VERSION = '2026-10-28.47';
     roomMsg.hidden = !msg;
   }
 
-  // 시작 화면: 혼자 하기 / 같이 하기 선택. 혼자 한 판 끝난 게임 오버 화면에서는 왼쪽 위 '같이 하기' 버튼
+  // 시작 화면: 혼자 하기 / 같이 하기 선택. 혼자 한 판 끝난 게임 오버 화면에서는 왼쪽 위에 같은 두 버튼
   const modeEl = document.getElementById('mode');
   function syncMpButton() {
     const free = !room && mpDialog.hidden;
@@ -1556,7 +1564,8 @@ const VERSION = '2026-10-28.47';
   }
 
   for (const el of [mpOpen, mpDialog, roomEl, modeEl]) el.addEventListener('pointerdown', (e) => e.stopPropagation());
-  mpOpen.addEventListener('click', () => openMp());
+  document.getElementById('over-solo').addEventListener('click', (e) => { e.currentTarget.blur(); startGame(); });
+  document.getElementById('over-multi').addEventListener('click', (e) => { e.currentTarget.blur(); openMp(); });
   document.getElementById('mode-solo').addEventListener('click', (e) => { e.currentTarget.blur(); startGame(); });
   document.getElementById('mode-multi').addEventListener('click', (e) => { e.currentTarget.blur(); openMp(); });
   document.getElementById('mp-next').addEventListener('click', mpNext);
