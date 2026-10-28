@@ -253,7 +253,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.52';
+const VERSION = '2026-10-28.53';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1171,7 +1171,7 @@ const VERSION = '2026-10-28.52';
       const t = document.createElement('span'); t.className = 'title'; t.textContent = roomTitle(m.code);
       const h = document.createElement('span'); h.className = 'host'; h.textContent = `👑 ${m.host}${m.mode ? ` · ${modeLabel(m.mode)}` : ''}`;
       info.append(t, h);
-      const st = document.createElement('span'); st.className = 'state'; st.textContent = full ? '가득 참' : m.playing ? '게임 중' : '대기 중';
+      const st = document.createElement('span'); st.className = 'state'; st.textContent = m.playing ? '게임 중' : full ? '가득 참' : '대기 중'; // 가득 찬 방도 게임 중이면 게임 중으로
       const c = document.createElement('span'); c.className = 'count'; c.textContent = `${m.n}/${ROOM_MAX}`;
       b.append(info, st, c);
       b.addEventListener('click', () => joinRoom(m.code));
@@ -2891,7 +2891,8 @@ const VERSION = '2026-10-28.52';
   // 이번 판 방 안 순위 (같이 출발한 사람 중 점수 순, 같은 점수는 같은 등수)
   function roomRank() {
     if (!room) return null;
-    const ps = [...room.players.values()].filter((p) => p.status !== 'ready');
+    // 대기 중인 사람과, 달리는 중으로 남아 있지만 멈춘 사람(창을 닫은 유령 등)은 순위에서 뺌
+    const ps = [...room.players.values()].filter((p) => p.status === 'over' || running(p));
     if (!ps.some((p) => p.id === myId)) return null;
     return {
       rank: 1 + ps.filter((p) => p.id !== myId && p.score > score).length,
