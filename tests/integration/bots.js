@@ -101,7 +101,9 @@ const check = (name, ok, detail = '') => { results.push({ name, ok }); console.l
         check(`${round}R 방 ${label}: ${d.name} 순위에 컴퓨터 포함`, d.rank && d.rank.n === 4 && d.rank.rank === want, `${JSON.stringify(d.rank)} 기대 ${want}등 / ${scores.map((p) => `${p.name}:${p.score}`).join(' ')}`);
       }
       const fromBots = [...h.hits, ...g.hits].filter((x) => x.from.startsWith('컴퓨터')).length;
-      if (label === 'A') check(`${round}R 방 A(아이템전): 컴퓨터의 공격이 사람에게 옴`, fromBots > 0, `${fromBots}건`);
+      // 컴퓨터가 50점(첫 아이템)에 못 미쳤으면 공격할 아이템이 없으므로 확인 생략
+      const botMax = Math.max(...bots.map((p) => p.score));
+      if (label === 'A') check(`${round}R 방 A(아이템전): 컴퓨터의 공격이 사람에게 옴`, fromBots > 0 || botMax < 50, botMax < 50 ? `컴퓨터 최고 ${botMax}점 → 아이템 없음` : `${fromBots}건`);
       else check(`${round}R 방 B(노템전): 공격 없음`, h.hits.length + g.hits.length === 0, `${h.hits.length + g.hits.length}건`);
       for (const u of [host, guest]) await u.page.evaluate(() => { window.__hits = []; });
     }
