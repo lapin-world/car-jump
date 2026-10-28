@@ -232,7 +232,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.48';
+const VERSION = '2026-10-28.51';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1073,14 +1073,26 @@ const VERSION = '2026-10-28.48';
   const LOBBY = 'car-jump-lobby';
   let lobbyCh = null, lobbyReady = false, lobbyMeta = '';
 
-  function openLobby() {
-    if (lobbyCh || !sbClient) return;
-    const ch = sbClient.channel(LOBBY, { config: { presence: { key: myId } } });
+  // 같은 이름의 채널을 막 닫는 중이면 supabase-js 가 그 (닫히는) 채널을 그대로 돌려줘
+  // 새 구독이 동작하지 않음 → 남아 있는 채널을 먼저 완전히 닫고 새로 만듦
+  async function freshChannel(name, opts) {
+    const stale = sbClient.getChannels().find((c) => c.topic === `realtime:${name}`);
+    if (stale) await sbClient.removeChannel(stale);
+    return sbClient.channel(name, opts);
+  }
+
+  let lobbyOpening = false;
+  async function openLobby() {
+    if (lobbyCh || lobbyOpening || !sbClient) return;
+    lobbyOpening = true;
+    const ch = await freshChannel(LOBBY, { config: { presence: { key: myId } } });
+    lobbyOpening = false;
+    if (lobbyCh) return;
     lobbyCh = ch;
     ch.on('presence', { event: 'sync' }, () => { if (lobbyCh === ch) renderLobby(); })
       .subscribe((status) => {
         if (lobbyCh !== ch) return;
-        if (status === 'SUBSCRIBED') { lobbyReady = true; lobbyMeta = ''; lobbySync(); renderLobby(); }
+        if (status === 'SUBSCRIBED') { lobbyReady = true; lobbyMeta = ''; lobbySync(); renderLobby(); closeLobbyIfIdle(); }
       });
   }
 
@@ -1236,7 +1248,7 @@ const VERSION = '2026-10-28.48';
       for (const b of mpDialog.querySelectorAll('button')) b.disabled = false;
       return;
     }
-    const ch = sbClient.channel(`car-jump-room-${code}`, { config: { presence: { key: myId }, broadcast: { self: false } } });
+    const ch = await freshChannel(`car-jump-room-${code}`, { config: { presence: { key: myId }, broadcast: { self: false } } });
     const r = { code, ch, players: new Map(), host: null, mode, me: { name, joined: Date.now() } };
     ch.on('presence', { event: 'sync' }, () => onPresence(r))
       .on('broadcast', { event: 'start' }, () => { if (room === r) startCountdown(); })
@@ -1270,8 +1282,9 @@ const VERSION = '2026-10-28.48';
     }
     r.players = new Map(list.slice(0, ROOM_MAX).map((p) => {
       const old = prev.get(p.id);
-      if (!old) return [p.id, p];
-      return [p.id, { ...p, frame: old.frame, frameAt: old.frameAt, ...(old.t > p.t ? { score: old.score, status: old.status, t: old.t } : {}) }];
+      const now = performance.now();
+      if (!old) return [p.id, { ...p, syncAt: now }];
+      return [p.id, { ...p, frame: old.frame, frameAt: old.frameAt, syncAt: p.t !== old.t ? now : old.syncAt, ...(old.t > p.t ? { score: old.score, status: old.status, t: old.t } : {}) }];
     }));
     r.host = list[0] && list[0].id;
     // 방 모드는 방을 만든 사람에게서 시작해 모두가 자기 정보에 함께 올려 둠 (방장이 나가도 유지)
@@ -1317,8 +1330,13 @@ const VERSION = '2026-10-28.48';
     if (state === 'playing' && !paused && clock - sentAt >= FRAME_SEND) {
       sendFrame();
       renderRoom();
+    } else if (now - roomCheckAt > 1000) {
+      // 멈춘 사람이 생기면 시작 버튼이 풀리도록 가끔 다시 확인
+      roomCheckAt = now;
+      renderRoom();
     }
   }
+  let roomCheckAt = 0;
 
   // 상대가 생기거나 모두 나가면 화면 위쪽 상대 화면 줄을 넣거나 빼고 다시 배치
   function relayout() {
@@ -1509,8 +1527,17 @@ const VERSION = '2026-10-28.48';
     renderRoom();
   }
 
+  // '달리는 중'인데 STALE_MS 동안 게임 화면 정보가 오지 않은 사람 (새로고침·창 닫기 후 접속 정보만 남은 경우,
+  // 앱 전환·일시정지로 멈춘 경우). 공격 대상·시작 대기·순위의 '달리는 중' 인원에서 뺌
+  const STALE_MS = 3000;
+  function running(p) {
+    if (p.status !== 'playing') return false;
+    if (p.id === myId) return state === 'playing';
+    return performance.now() - Math.max(p.frameAt || 0, p.syncAt || 0) < STALE_MS;
+  }
+
   function canStart() {
-    return room && room.host === myId && !countdownAt && [...room.players.values()].every((p) => p.status !== 'playing');
+    return room && room.host === myId && !countdownAt && ![...room.players.values()].some(running);
   }
 
   function renderRoom() {
@@ -1600,7 +1627,8 @@ const VERSION = '2026-10-28.48';
 
   // ---------- 아이템전 ----------
   // 점수가 ITEM_EVERY 점 오를 때마다 무작위 아이템 1개 (공격·방어 합쳐 최대 ITEM_MAX 개 보관, 꽉 차면 버림).
-  // 공격 아이템은 달리고 있는 상대 중 무작위 1명에게, 방어는 나에게만 적용
+  // 공격 아이템은 같은 방에서 달리고 있는 상대 모두에게, 방어는 나에게만 적용.
+  // 같은 공격이 겹치면(여러 명이 동시에 보내거나 효과 중에 또 받으면) 화이트아웃·안개는 시간이 늘고 라이벌은 대수가 늘어남
   const ITEM_EVERY = 50;
   const ITEM_MAX = 3;
   const ATTACK_TIME = 3;   // 화이트아웃·안개 지속 시간(초)
@@ -1615,6 +1643,7 @@ const VERSION = '2026-10-28.48';
   const ITEM_KINDS = Object.keys(ITEM_INFO);
   const itemsEl = document.getElementById('items');
   let items = [], nextItemAt = ITEM_EVERY, whiteUntil = 0, fogUntil = 0, shieldUntil = 0, itemsKey = '';
+  let whiteFrom = 0, fogFrom = 0; // 효과가 시작된 시각 (겹쳐서 늘어나도 시작 페이드는 한 번만)
 
   function itemMode() {
     return !!room && room.mode === 'item';
@@ -1623,7 +1652,7 @@ const VERSION = '2026-10-28.48';
   function resetItems() {
     items = [];
     nextItemAt = ITEM_EVERY;
-    whiteUntil = fogUntil = shieldUntil = 0;
+    whiteUntil = fogUntil = shieldUntil = whiteFrom = fogFrom = 0;
   }
 
   function itemTick() {
@@ -1641,37 +1670,50 @@ const VERSION = '2026-10-28.48';
     if (state !== 'playing' || paused || !itemMode() || !items[i]) return;
     const k = items[i];
     const info = ITEM_INFO[k];
-    let target = null;
+    let targets = [];
     if (k !== 'shield') {
-      const alive = [...room.players.values()].filter((p) => p.id !== myId && p.status === 'playing');
-      if (!alive.length) { popup('공격할 상대가 없어요', '#94a3b8'); return; } // 아이템은 그대로 둠
-      target = alive[Math.floor(Math.random() * alive.length)];
+      // 지금 이 방에서 실제로 달리고 있는 상대 모두 (running: 접속 정보만 남은 사람·멈춘 사람 제외)
+      targets = [...room.players.values()].filter((p) => p.id !== myId && running(p));
+      if (!targets.length) { popup('공격할 상대가 없어요', '#94a3b8'); return; } // 아이템은 그대로 둠
     }
     items.splice(i, 1);
     if (k === 'shield') {
       // 지금 받은 공격 제거: 화이트아웃·안개 끝내고, 아직 다가오는 공격 차량은 치움 (머리 위를 넘는 중인 라이벌은 그대로)
       whiteUntil = fogUntil = 0;
       obstacles = obstacles.filter((o) => !o.attack || o.passed || (o.rival && o.t >= 0 && !o.landed) || o.x < player.x + 60 * CAR_SCALE);
-      shieldUntil = clock + SHIELD_TIME;
-      popup(`${info.icon} 방어막 ${SHIELD_TIME}초!`, '#67e8f9');
+      // 방어막 중에 또 쓰면 남은 시간에 더함
+      shieldUntil = Math.max(shieldUntil, clock) + SHIELD_TIME;
+      popup(`${info.icon} 방어막 ${Math.ceil(shieldUntil - clock)}초!`, '#67e8f9');
     } else {
-      room.ch.send({ type: 'broadcast', event: 'attack', payload: { from: myId, to: target.id, kind: k } });
-      popup(`${info.icon} ${info.name} → ${target.name}`, '#a78bfa');
+      room.ch.send({ type: 'broadcast', event: 'attack', payload: { room: room.code, from: myId, to: targets.map((p) => p.id), kind: k } });
+      popup(`${info.icon} ${info.name} → ${targets.length > 1 ? `모두(${targets.length}명)` : targets[0].name}`, '#a78bfa');
     }
   }
 
-  function receiveAttack({ from, to, kind }) {
+  function receiveAttack({ room: code, from, to, kind }) {
     const info = ITEM_INFO[kind];
-    if (!info || kind === 'shield' || to !== myId || state !== 'playing' || !itemMode()) return;
+    if (!info || kind === 'shield' || !Array.isArray(to) || !to.includes(myId) || state !== 'playing' || !itemMode()) return;
+    // 같은 방 사람이 보낸 공격만 받음
+    if (code !== room.code || from === myId || !room.players.has(from)) return;
     const who = (room.players.get(from) || {}).name || '상대';
     if (clock < shieldUntil) {
       popup(`🛡️ ${who}의 ${info.name} 막음!`, '#67e8f9');
       return;
     }
-    popup(`${info.icon} ${who}의 ${info.name}!`, '#f87171');
-    if (kind === 'white') whiteUntil = clock + ATTACK_TIME;
-    else if (kind === 'fog') fogUntil = clock + ATTACK_TIME;
-    else forceRival(kind === 'sky');
+    if (kind === 'white' || kind === 'fog') {
+      // 이미 같은 효과 중이면 남은 시간에 ATTACK_TIME 을 더함
+      const until = kind === 'white' ? whiteUntil : fogUntil;
+      const stacked = clock < until;
+      const next = (stacked ? until : clock) + ATTACK_TIME;
+      if (kind === 'white') { if (!stacked) whiteFrom = clock; whiteUntil = next; }
+      else { if (!stacked) fogFrom = clock; fogUntil = next; }
+      popup(stacked ? `${info.icon} ${who}의 ${info.name} 추가! (${Math.ceil(next - clock)}초)` : `${info.icon} ${who}의 ${info.name}!`, '#f87171');
+    } else {
+      // 라이벌은 받을 때마다 한 대씩 더 (앞 라이벌 뒤에 차례로 배치)
+      forceRival(kind === 'sky');
+      const n = obstacles.filter((o) => o.attack && !o.passed && !!o.sky === (kind === 'sky')).length;
+      popup(n > 1 ? `${info.icon} ${who}의 ${info.name} x${n}!` : `${info.icon} ${who}의 ${info.name}!`, '#f87171');
+    }
   }
 
   // 공격으로 라이벌을 바로 등장시킴. 이미 오고 있는 차량을 다 지난 뒤에 오게 하고, 다음 차량도 그만큼 늦춰
@@ -1696,15 +1738,15 @@ const VERSION = '2026-10-28.48';
   }
 
   // 공격 효과 투명도: 시작·끝에 짧게 페이드
-  function effectAlpha(until) {
+  function effectAlpha(from, until) {
     const left = until - clock;
     if (left <= 0) return 0;
-    return Math.max(0, Math.min(1, left / 0.3, (ATTACK_TIME - left) / 0.2 + 0.2));
+    return Math.max(0, Math.min(1, left / 0.3, (clock - from) / 0.2 + 0.2));
   }
 
   // 화이트아웃: 배경(하늘·도로·터널)을 흰색으로 덮고 차량은 그 위에 그림
   function drawWhiteout() {
-    const a = effectAlpha(whiteUntil);
+    const a = effectAlpha(whiteFrom, whiteUntil);
     if (!a) return;
     ctx.fillStyle = `rgba(248,250,252,${0.97 * a})`;
     ctx.fillRect(0, 0, W, H);
@@ -1712,7 +1754,7 @@ const VERSION = '2026-10-28.48';
 
   // 안개: 내 차 앞쪽을 반투명하게 가림 (다가오는 차가 흐릿하게 보이는 정도)
   function drawFog() {
-    const a = effectAlpha(fogUntil);
+    const a = effectAlpha(fogFrom, fogUntil);
     if (!a) return;
     const x0 = player.x + 50 * CAR_SCALE;
     const grad = ctx.createLinearGradient(x0, 0, x0 + 200, 0);
@@ -2770,7 +2812,8 @@ const VERSION = '2026-10-28.48';
         ctx.fillStyle = color;
         ry += 30;
       }
-      ctx.fillText(room ? roomHint() : isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, ry);
+      // 같이 하기 방에서는 같은 안내가 방 패널에 있으므로 생략
+      if (!room) ctx.fillText(isTouch ? '길게 눌러서 다시 시작' : 'Enter / Space 길게 눌러 다시 시작', x, ry);
       // 길게 누르는 동안 진행 막대
       if (restartHold !== null) {
         const t = Math.min(1, (clock - restartHold) / RESTART_HOLD);
@@ -2790,7 +2833,7 @@ const VERSION = '2026-10-28.48';
     return {
       rank: 1 + ps.filter((p) => p.id !== myId && p.score > score).length,
       n: ps.length,
-      alive: ps.filter((p) => p.status === 'playing').length,
+      alive: ps.filter(running).length,
     };
   }
 
@@ -2858,18 +2901,26 @@ const VERSION = '2026-10-28.48';
     let sideW = ''; // 비우면 CSS 기본 폭
     if (split) {
       x = Math.round(W * 0.27);
+      y = Math.round(Math.max(72, H * 0.3));
+      let rankMaxH = H - 24;
       if (roomBox) {
         const left = roomBox.right + 12, right = W - 16 - Math.min(320, W * 0.46);
-        x = Math.round(Math.max(x, (left + right) / 2));
-        sideW = `${Math.round(Math.min(300, right - left - 8))}px`;
+        if (right - left >= 320) {
+          x = Math.round(Math.max(x, (left + right) / 2));
+          sideW = `${Math.round(Math.min(300, right - left - 8))}px`;
+        } else {
+          // 방 패널과 랭킹 패널 사이가 좁으면 문구를 두 패널 아래 가운데에 두고 랭킹 패널 높이를 그 위로 제한
+          x = Math.round(W / 2);
+          y = Math.round(Math.min(H - 40 - extra, roomBox.bottom - topInset + 40));
+          rankMaxH = Math.max(60, y - 52 - 12);
+        }
       }
-      y = Math.round(Math.max(72, H * 0.3));
-      key = `s${x},${y},${H},${rankEl.hidden},${extra},${sideW},${topInset}`;
+      key = `s${x},${y},${H},${rankEl.hidden},${extra},${sideW},${topInset},${rankMaxH}`;
       if (key !== overLayoutKey) {
         rankEl.classList.add('split');
         if (rankForm.parentNode !== rankSide) rankSide.append(rankForm);
         rankEl.style.top = `${topInset + 12}px`;
-        rankEl.style.maxHeight = `${H - 24}px`;
+        rankEl.style.maxHeight = `${rankMaxH}px`;
         rankSide.style.left = `${x}px`;
         rankSide.style.width = sideW;
         rankSide.style.top = `${topInset + y + 58 + extra}px`;
