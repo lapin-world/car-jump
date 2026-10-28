@@ -1,6 +1,6 @@
 // 자동 생성 파일 — 직접 고치지 말 것. index.html 의 게임 규칙을 고친 뒤 node supabase/build-sim.mjs 실행
 // 브라우저와 같은 규칙 코드로 게임을 다시 돌려(리플레이) 점수를 확인함
-export const SIM_VERSION = 'f53b00742474';
+export const SIM_VERSION = '087844aab54f';
 
 // 한 판 최대 길이(스텝, 3시간)·입력 수, 받을 수 있는 공격 수 (아이템전).
 // 공격은 상대가 점수 ITEM_EVERY(50)점마다 얻는 아이템이라 상대 3명이 아무리 빨리 득점해도 (초당 약 4점) 1분에 약 15개,
@@ -11,7 +11,7 @@ export const LIMITS = { maxSteps: 240 * 60 * 60 * 3, maxEvents: 200000, attacksB
 export function createGame() {
   let W = 0, groundY = 0;
   // 화면 연출은 서버에서 필요 없음
-  const smoke = () => {}, sparks = () => {}, popup = () => {}, feedPush = () => {}, onGameOver = () => {}, onGameClear = () => {};
+  const smoke = () => {}, sparks = () => {}, popup = () => {}, feedPush = () => {}, onGameOver = () => {}, onGameClear = () => {}, onGameWin = () => {};
   // 물리 상수: 체공 약 0.9초, 최고 높이 약 185px
   const GRAVITY = 1850;
   const JUMP_VELOCITY = 830;
@@ -91,6 +91,8 @@ export function createGame() {
   let tunnel = null;   // 하이퍼루프 터널 { x: 입구 위치, len: 길이 }
   let moonCycle = 0;   // 지금까지 지난 달 주기 수 (피버타임 등장 판정)
   let cleared = false; // 만점(MAX_SCORE) 달성으로 끝났는지
+  let won = false;     // 같이 하기에서 다른 사람을 모두 제쳐 1등으로 끝났는지
+  let winPending = false; // 1등 확정 입력(V)을 받아 다음 스텝에 끝낼 예정
   let feverEndAt = -Infinity; // 터널 구간 차량 생성이 끝난 시각
 
   // 게임은 화면 주사율과 상관없이 STEP초 간격으로 진행 → 어느 기기에서든, 서버에서 다시 돌려도 같은 결과
@@ -120,6 +122,7 @@ export function createGame() {
 
   // 게임에 영향을 주는 입력은 모두 여기로. 게임 중이면 스텝 번호와 함께 기록해 서버가 같은 순간에 다시 적용함
   // H 누름 · R 뗌 · T 점프/연타 · G 일시정지 해제 · I 아이템 사용(칸) · A 공격 받음(종류) · W 화면 폭 바뀜(폭)
+  // V 같이 하기 1등 확정 (다른 사람이 모두 끝났고 내가 앞섬 → 게임 종료)
   function simInput(c, a) {
     if ((c === 'H' && holding) || (c === 'R' && !holding) || (c === 'W' && W === a)) return;
     if (state === 'playing') replay.ev.push(a === undefined ? [simSteps, c] : [simSteps, c, a]);
@@ -138,6 +141,7 @@ export function createGame() {
       case 'I': return useItemEffect(a);
       case 'A': return attackEffect(a);
       case 'W': W = a; if (player) player.x = Math.max(100, W * 0.2); return;
+      case 'V': winPending = true; return;
     }
   }
 
@@ -160,6 +164,8 @@ export function createGame() {
     };
     tunnel = null;
     cleared = false;
+    won = false;
+    winPending = false;
     moonCycle = Math.floor(clock / MOON_CYCLE + 0.1);
     resetItems();
   }
@@ -391,6 +397,7 @@ export function createGame() {
     moonCycle = cycle;
     if (state !== 'playing') return;
     simSteps++;
+    if (winPending) { gameWin(); return; }
     if (newMoon && score >= FEVER_SCORE && !tunnel) startFever();
     const lv = score < LEVEL_SCORE ? 0 : Math.min(MAX_LEVEL, 1 + Math.floor((score - LEVEL_SCORE) / LEVEL_STEP));
     if (lv > level) level = lv; // 단계는 화면에 표시하지 않고 난이도에만 반영
@@ -497,6 +504,13 @@ export function createGame() {
     cleared = true;
     state = 'over';
     onGameClear();
+  }
+
+  // 같이 하기 1등 확정: 점수는 그대로 두고 게임 종료 + 축하 화면
+  function gameWin() {
+    won = true;
+    state = 'over';
+    onGameWin();
   }
 
   const ITEM_EVERY = 50;
@@ -656,7 +670,7 @@ export function verifyReplay(seed, r) {
     if (!Array.isArray(e) || !Number.isInteger(e[0]) || e[0] < prev || e[0] >= r.n) return bad('replay');
     prev = e[0];
     const [, c, a] = e;
-    if (c === 'H' || c === 'R' || c === 'T' || c === 'G') { if (e.length !== 2) return bad('replay'); }
+    if (c === 'H' || c === 'R' || c === 'T' || c === 'G' || c === 'V') { if (e.length !== 2) return bad('replay'); }
     else if (c === 'W') { if (e.length !== 3 || !num(a, 800, 10000)) return bad('replay'); }
     else if (c === 'I') { if (!r.it || e.length !== 3 || !Number.isInteger(a) || a < 0 || a >= g.ITEM_MAX) return bad('replay'); }
     else if (c === 'A') { if (!r.it || e.length !== 3 || !g.ATTACKS.includes(a)) return bad('replay'); attacks++; }

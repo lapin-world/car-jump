@@ -26,6 +26,8 @@ const fixtures = [
     if (k % 2880 === 1440) p.input('A', ['mint', 'white', 'sky', 'fog'][(k / 2880 | 0) % 4]);
     if (k % 2000 === 1000 && p.get().items.length) p.input('I', 0);
   } }),
+  // 같이 하기: 다른 사람이 모두 끝나 1등 확정(V) → 부딪히기 전에 끝남
+  game({ items: true, maxSec: 150, extra: (k, p) => { if (k === 240 * 40) p.input('V'); } }),
 ];
 check('봇 플레이 준비', fixtures.every((f) => f.score > 30), fixtures.map((f) => f.score).join(','));
 let captcha = null; // verifyCaptcha 결과 (null: 사람 확인 안 씀)

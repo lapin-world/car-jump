@@ -50,7 +50,7 @@ rep("  let last = performance.now(), simAcc = 0;\n", r"""  let autoHold = 0, aut
   window.__paused = () => paused;
   window.__dbg = () => ({
     name: room && room.me.name, room: room && room.code, mode: room && room.mode, host: room && room.players.get(room.host) && room.players.get(room.host).name,
-    me: myId, state, score, items: items.slice(), countdown: !!countdownAt,
+    me: myId, state, score, won, items: items.slice(), countdown: !!countdownAt,
     players: room ? [...room.players.values()].map((q) => ({ id: q.id, name: q.name, score: q.score, status: q.status })) : [],
     rank: roomRank(), topInset, frames: window.__frames || 0, hits: window.__hits || [],
     canStart: room ? canStart() : null, lobby: [...document.querySelectorAll('#mp-rooms li')].map((l) => l.textContent),

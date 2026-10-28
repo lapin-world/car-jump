@@ -175,9 +175,15 @@ function check(name, ok, detail = '') { results.push({ name, ok, detail }); log(
       let hitCount = 0;
       for (const d of ds) for (const h of d.hits) { hitCount++; if (h.room !== h.myRoom || h.room !== r.code || !names.has(h.from)) leak.push(`${d.name}<-${h.from}(${h.room})`); }
       check(`${no}R ${r.label} 다른 방과 간섭 없음`, leak.length === 0, leak.join(', ') || `받은 공격 알림 ${hitCount}건 모두 같은 방`);
+      // d. 1등 확정(다른 사람이 모두 끝나고 앞섬)으로 끝난 사람은 그 방 단독 1등
+      const winBad = played.filter((d) => d.won && played.some((q) => q.name !== d.name && q.score >= d.score)).map((d) => d.name);
+      check(`${no}R ${r.label} 1등 확정 종료`, winBad.length === 0, winBad.join(', ') || (played.filter((d) => d.won).map((d) => `${d.name}=${d.score}점 1등 확정`).join(' ') || '1등 확정 없음'));
       if (r.mode === 'item') {
         const items = ds.reduce((a, d) => a + d.items.length, 0);
-        check(`${no}R ${r.label} 아이템전 공격 오감 (상대가 남아 있었을 때)`, hitCount > 0 || items > 0, `받은 공격 ${hitCount}건, 쓰지 못한 아이템 ${items}개`);
+        // 아이템은 ITEM_EVERY(50)점마다 생기므로 모두 그 전에 끝났으면 주고받을 게 없음
+        // (예전에는 혼자 남은 사람이 계속 달려 아이템을 모았지만, 지금은 앞서면 1등 확정으로 바로 끝남)
+        const anyItem = ds.some((d) => d.score >= 50);
+        check(`${no}R ${r.label} 아이템전 공격 오감 (상대가 남아 있었을 때)`, hitCount > 0 || items > 0 || !anyItem, `받은 공격 ${hitCount}건, 쓰지 못한 아이템 ${items}개${anyItem ? '' : ' (모두 50점 전에 끝남)'}`);
       }
       else check(`${no}R ${r.label} 노템전 아이템 없음`, hitCount === 0 && ds.every((d) => d.items.length === 0), `${hitCount}건`);
       // d. 랭킹 자동 등록
