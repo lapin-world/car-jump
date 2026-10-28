@@ -20,9 +20,9 @@
 <meta name="twitter:description" content="엔터 한 번으로 테슬라를 뛰어넘어라!">
 <meta name="twitter:image" content="https://lapin-world.github.io/car-jump/assets/og-image.png">
 <style>
-  html, body { margin: 0; height: 100%; background: #020617; overflow: hidden; }
-  body { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
-  canvas { display: block; width: 100vw; height: 100vh; } /* 실제 크기는 resize() 에서 보이는 화면(innerWidth/innerHeight)에 맞춤 */
+  html, body { margin: 0; height: 100%; background: #020617; overflow: hidden; touch-action: none; }
+  body { user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; } /* 실제 크기는 resize() 에서 보이는 화면(innerWidth/innerHeight)에 맞춤 */
   /* 게임 오버 시 랭킹 패널 */
   #rank {
     position: fixed; left: 50%; top: 40%; transform: translateX(-50%); overflow-y: auto; /* top·max-height 는 JS(layoutOver)에서 문구 아래로 맞춤 */
@@ -616,6 +616,15 @@ const VERSION = '2026-10-28.57';
   window.addEventListener('pointerup', () => { simInput('R'); });
   window.addEventListener('pointercancel', () => { simInput('R'); });
   window.addEventListener('blur', () => { simInput('R'); setPaused(true); });
+  // iOS 사파리는 user-scalable=no 를 무시해 터널 연타가 더블탭 확대로 잡히므로 직접 막음 (입력칸은 제외)
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = performance.now();
+    if (now - lastTouchEnd < 350 && !e.target.closest('input, textarea, select')) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
+  document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+  for (const t of ['gesturestart', 'gesturechange']) document.addEventListener(t, (e) => e.preventDefault(), { passive: false });
 
   const isTouch = window.matchMedia('(pointer: coarse)').matches; // 조작 안내 문구용 (탭 / 키보드)
 
