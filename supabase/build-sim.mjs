@@ -30,7 +30,7 @@ export const LIMITS = { maxSteps: 240 * 60 * 60 * 3, maxEvents: 200000, attacksB
 export function createGame() {
   let W = 0, groundY = 0;
   // 화면 연출은 서버에서 필요 없음
-  const smoke = () => {}, sparks = () => {}, popup = () => {}, feedPush = () => {}, onGameOver = () => {}, onGameClear = () => {};
+  const smoke = () => {}, sparks = () => {}, popup = () => {}, feedPush = () => {}, onGameOver = () => {}, onGameClear = () => {}, onGameWin = () => {};
 ${code}
   return {
     STEP, ITEM_MAX, ATTACKS: ITEM_KINDS.filter((k) => k !== 'shield'),
@@ -72,7 +72,7 @@ export function verifyReplay(seed, r) {
     if (!Array.isArray(e) || !Number.isInteger(e[0]) || e[0] < prev || e[0] >= r.n) return bad('replay');
     prev = e[0];
     const [, c, a] = e;
-    if (c === 'H' || c === 'R' || c === 'T' || c === 'G') { if (e.length !== 2) return bad('replay'); }
+    if (c === 'H' || c === 'R' || c === 'T' || c === 'G' || c === 'V') { if (e.length !== 2) return bad('replay'); }
     else if (c === 'W') { if (e.length !== 3 || !num(a, 800, 10000)) return bad('replay'); }
     else if (c === 'I') { if (!r.it || e.length !== 3 || !Number.isInteger(a) || a < 0 || a >= g.ITEM_MAX) return bad('replay'); }
     else if (c === 'A') { if (!r.it || e.length !== 3 || !g.ATTACKS.includes(a)) return bad('replay'); attacks++; }
