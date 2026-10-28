@@ -93,6 +93,23 @@
     border: 1px solid rgba(251,191,36,0.7); background: rgba(15,23,42,0.8); color: #fbbf24;
   }
   #mode button.solo { background: #fbbf24; color: #111827; }
+  /* 아이템전: 화면 왼쪽 아래 아이템 칸 (탭 또는 숫자키 1·2·3 으로 사용) */
+  #items {
+    position: fixed; left: max(12px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom));
+    display: flex; gap: 8px; align-items: center;
+  }
+  #items[hidden] { display: none; }
+  #items button {
+    position: relative; width: 56px; height: 56px; padding: 0; border-radius: 14px;
+    border: 1px solid rgba(167,139,250,0.75); background: rgba(15,23,42,0.8); color: #f8fafc;
+    font: 600 11px system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  }
+  #items button .ic { font-size: 22px; line-height: 1; }
+  #items button .key { position: absolute; top: 2px; left: 5px; font-size: 10px; color: #94a3b8; }
+  #items button.empty { opacity: 0.3; }
+  #items .info { color: #cbd5e1; font: 600 12px system-ui, sans-serif; text-shadow: 0 1px 2px #000; }
+  #items .info .shield { display: block; color: #67e8f9; }
+  #mp .mode-row button { flex: 1; }
   /* 열린 방 목록 */
   #mp .rooms-title { margin: 4px 0 6px; color: #cbd5e1; font-weight: 600; }
   #mp-rooms { list-style: none; margin: 0 0 10px; padding: 0; max-height: min(240px, 40vh); overflow-y: auto; }
@@ -162,6 +179,7 @@
 </div>
 <div id="rank-side" hidden></div>
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
+<div id="items" hidden></div>
 <button id="mp-open" type="button" hidden>👥 같이 하기</button>
 <div id="mode" hidden>
   <button id="mode-solo" class="solo" type="button">🚕 혼자 하기</button>
@@ -177,7 +195,11 @@
     </div>
     <div id="mp-step2" hidden>
       <p class="who"><span>이름: <b id="mp-who"></b></span><button id="mp-rename" class="sub" type="button">변경</button></p>
-      <div class="row"><button id="mp-create" type="button" style="flex:1">방 만들기</button></div>
+      <p class="rooms-title">방 만들기</p>
+      <div class="row mode-row">
+        <button id="mp-create-item" type="button">🎁 아이템전</button>
+        <button id="mp-create-normal" type="button">🚕 노템전</button>
+      </div>
       <p class="rooms-title">열린 방 (눌러서 입장)</p>
       <ol id="mp-rooms"></ol>
       <div class="row">
@@ -202,7 +224,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.45';
+const VERSION = '2026-10-28.47';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -360,6 +382,7 @@ const VERSION = '2026-10-28.45';
     tunnel = null;
     cleared = false;
     moonCycle = Math.floor(clock / MOON_CYCLE + 0.1);
+    resetItems();
   }
 
   function airDuration() {
@@ -421,6 +444,7 @@ const VERSION = '2026-10-28.45';
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
     if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') setPaused(!paused);
+    if (e.key === '1' || e.key === '2' || e.key === '3') useItem(Number(e.key) - 1); // 아이템전: 아이템 사용
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) setPaused(true); });
 
@@ -766,9 +790,9 @@ const VERSION = '2026-10-28.45';
         carsPassed++;
         const pts = o.type.points * (o.fever ? 2 : 1);
         score += pts;
-        if (o.rival) popup(`안전운전 +${pts}점`, o.fever ? '#f472b6' : '#facc15');
+        if (o.rival && !o.sky) popup(`안전운전 +${pts}점`, o.fever ? '#f472b6' : '#facc15');
         else if (o.fever) popup(`FEVER +${pts}`, '#f472b6');
-        if (!player.onGround && !o.rival) {
+        if (!player.onGround && (!o.rival || o.sky)) { // 하늘색 라이벌은 일반 차량처럼 뛰어넘음
           player.jumpClears++;
           if (o.minClear < NEAR_MISS) player.jumpNear++;
         }
@@ -800,6 +824,7 @@ const VERSION = '2026-10-28.45';
         }
       }
     }
+    itemTick();
     if (state === 'playing' && score >= MAX_SCORE) gameClear();
   }
 
@@ -1066,7 +1091,7 @@ const VERSION = '2026-10-28.45';
     if (!lobbyCh || !lobbyReady) return;
     if (room && room.host === myId) {
       const ps = [...room.players.values()];
-      const meta = { code: room.code, host: room.me.name, n: room.players.size, playing: ps.some((p) => p.status === 'playing') || !!countdownAt };
+      const meta = { code: room.code, host: room.me.name, mode: room.mode, n: room.players.size, playing: ps.some((p) => p.status === 'playing') || !!countdownAt };
       const k = JSON.stringify(meta);
       if (k !== lobbyMeta) { lobbyMeta = k; lobbyCh.track(meta); }
     } else if (lobbyMeta) {
@@ -1103,7 +1128,7 @@ const VERSION = '2026-10-28.45';
       b.disabled = full;
       const info = document.createElement('span'); info.className = 'info';
       const t = document.createElement('span'); t.className = 'title'; t.textContent = roomTitle(m.code);
-      const h = document.createElement('span'); h.className = 'host'; h.textContent = `👑 ${m.host}`;
+      const h = document.createElement('span'); h.className = 'host'; h.textContent = `👑 ${m.host}${m.mode ? ` · ${modeLabel(m.mode)}` : ''}`;
       info.append(t, h);
       const st = document.createElement('span'); st.className = 'state'; st.textContent = full ? '가득 참' : m.playing ? '게임 중' : '대기 중';
       const c = document.createElement('span'); c.className = 'count'; c.textContent = `${m.n}/${ROOM_MAX}`;
@@ -1173,8 +1198,9 @@ const VERSION = '2026-10-28.45';
       d: r1(distance), s: r1(speed),
       p: [r1(player.y), r1(player.vy), r2(player.roll), r2(player.airTime), player.onGround ? 1 : 0, player.mode || ''],
       o: obstacles.filter((o) => o.x - px < 1800).map((o) => o.rival
-        ? [-1, r1(o.x - px), r1(o.jumpAt - px), r1(o.land - px), r2(o.t), o.landed ? 1 : 0]
+        ? [o.sky ? -2 : -1, r1(o.x - px), r1(o.jumpAt - px), r1(o.land - px), r2(o.t), o.landed ? 1 : 0]
         : [OBSTACLE_TYPES.indexOf(o.type), r1(o.x - px)]),
+      fx: (clock < whiteUntil ? 1 : 0) | (clock < fogUntil ? 2 : 0) | (clock < shieldUntil ? 4 : 0), // 받은 공격·방어막 표시
       tn: tunnel ? [r1(tunnel.x - px), r1(tunnel.len)] : 0,
     };
   }
@@ -1186,7 +1212,8 @@ const VERSION = '2026-10-28.45';
     mergePlayer(p);
   }
 
-  async function joinRoom(code) {
+  // mode: 방을 만들 때만 'item'(아이템전) / 'normal'(노템전). 참여할 때는 방 사람들의 정보에서 받아 옴
+  async function joinRoom(code, mode) {
     const name = mpName.value.trim().slice(0, 12);
     if (!name) { mpMsg.textContent = '이름을 입력해 주세요'; mpName.focus(); return; }
     code = code.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -1202,15 +1229,16 @@ const VERSION = '2026-10-28.45';
       return;
     }
     const ch = sbClient.channel(`car-jump-room-${code}`, { config: { presence: { key: myId }, broadcast: { self: false } } });
-    const r = { code, ch, players: new Map(), host: null, me: { name, joined: Date.now() } };
+    const r = { code, ch, players: new Map(), host: null, mode, me: { name, joined: Date.now() } };
     ch.on('presence', { event: 'sync' }, () => onPresence(r))
       .on('broadcast', { event: 'start' }, () => { if (room === r) startCountdown(); })
       .on('broadcast', { event: 'frame' }, ({ payload }) => { if (room === r) { mergePlayer(payload); renderRoom(); } })
+      .on('broadcast', { event: 'attack' }, ({ payload }) => { if (room === r) receiveAttack(payload); })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           if (room && room !== r) return;
           room = r;
-          await ch.track({ name, joined: r.me.joined, ...myStatus() });
+          await trackMe();
           closeMp();
           history.replaceState(null, '', `${location.pathname}?room=${code}`);
         } else if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && room !== r) {
@@ -1238,7 +1266,15 @@ const VERSION = '2026-10-28.45';
       return [p.id, { ...p, frame: old.frame, frameAt: old.frameAt, ...(old.t > p.t ? { score: old.score, status: old.status, t: old.t } : {}) }];
     }));
     r.host = list[0] && list[0].id;
+    // 방 모드는 방을 만든 사람에게서 시작해 모두가 자기 정보에 함께 올려 둠 (방장이 나가도 유지)
+    if (!r.mode) r.mode = (list.find((p) => p.mode) || {}).mode;
+    const mine = list.find((p) => p.id === myId);
+    if (room === r && r.mode && mine && !mine.mode) trackMe();
     if (room === r) renderRoom();
+  }
+
+  function trackMe() {
+    return room.ch.track({ name: room.me.name, joined: room.me.joined, mode: room.mode, ...myStatus() });
   }
 
   function leaveRoom() {
@@ -1257,7 +1293,7 @@ const VERSION = '2026-10-28.45';
   // 시작/게임 오버 때 상태를 Presence 에도 남겨 나중에 들어온 사람도 볼 수 있게 함
   function roomStatus() {
     if (!room) return;
-    room.ch.track({ name: room.me.name, joined: room.me.joined, ...myStatus() });
+    trackMe();
     sendFrame();
     renderRoom();
   }
@@ -1289,7 +1325,7 @@ const VERSION = '2026-10-28.45';
     const dt = f && rp.status === 'playing' ? Math.min(0.5, (now - rp.frameAt) / 1000) : 0;
     const sp = f ? f.s : START_SPEED;
     const distance = (f ? f.d : 0) + sp * dt;
-    if (!f) return { distance, player: { y: 0, roll: 0, onGround: true }, obstacles: [], tunnel: null };
+    if (!f) return { distance, player: { y: 0, roll: 0, onGround: true }, obstacles: [], tunnel: null, fx: 0 };
     let [y, vy, roll, air, ground, mode] = f.p;
     if (!ground && !mode) {
       air += dt;
@@ -1300,7 +1336,7 @@ const VERSION = '2026-10-28.45';
     }
     const obstacles = f.o.map(([ti, rx, jump, land, t, landed]) => {
       if (ti >= 0) return { type: OBSTACLE_TYPES[ti], x: px + rx - sp * dt };
-      const o = { rival: true, x: px + rx - sp * dt, hop: 0, roll: 0 };
+      const o = { rival: true, sky: ti === -2, x: px + rx - sp * dt, hop: 0, roll: 0 };
       if (t >= 0 && !landed) {
         const tt = t + dt, p = Math.min(1, tt / ROLL_TIME);
         if (p < 1) {
@@ -1313,28 +1349,30 @@ const VERSION = '2026-10-28.45';
       }
       return o;
     });
-    return { distance, player: { y, roll, onGround: !!ground }, obstacles, tunnel: f.tn ? { x: px + f.tn[0] - sp * dt, len: f.tn[1] } : null };
+    return { distance, player: { y, roll, onGround: !!ground }, obstacles, tunnel: f.tn ? { x: px + f.tn[0] - sp * dt, len: f.tn[1] } : null, fx: f.fx || 0 };
   }
 
   // 상대 화면용 라이벌 회전 프레임 (상대 화면에 라이벌이 처음 나올 때 한 번만 저해상도로 만듦)
   const MINI_RIVAL_FRAMES = 24;
-  let miniRivalSprites = null;
-  function miniRivalSprite(roll) {
-    if (!miniRivalSprites) {
+  const miniRivalSprites = {};
+  function miniRivalSprite(roll, sky) {
+    const key = sky ? 'sky' : 'mint';
+    if (!miniRivalSprites[key]) {
       const k = CAR_SCALE * Math.max(1, dpr * 0.5);
-      miniRivalSprites = [];
-      for (let i = 0; i < MINI_RIVAL_FRAMES; i++) {
+      const list = miniRivalSprites[key] = [];
+      // 하늘색 라이벌은 뛰지 않으므로 바로 선 프레임 하나만 있으면 됨
+      for (let i = 0; i < (sky ? 1 : MINI_RIVAL_FRAMES); i++) {
         const cv = document.createElement('canvas');
         cv.width = SPRITE_W * k;
         cv.height = SPRITE_H * k;
         const g = cv.getContext('2d');
         g.setTransform(-k, 0, 0, k, cv.width / 2, cv.height / 2); // 좌우 반전: 왼쪽을 향함
-        renderRoadster(g, (i / MINI_RIVAL_FRAMES) * Math.PI * 2, 0, RIVAL_MESH);
-        miniRivalSprites.push(cv);
+        renderRoadster(g, (i / MINI_RIVAL_FRAMES) * Math.PI * 2, 0, sky ? SKY_MESH : RIVAL_MESH);
+        list.push(cv);
       }
     }
-    const n = MINI_RIVAL_FRAMES;
-    return miniRivalSprites[((Math.round((roll / (Math.PI * 2)) * n) % n) + n) % n];
+    const list = miniRivalSprites[key], n = list.length;
+    return list[((Math.round((roll / (Math.PI * 2)) * n) % n) + n) % n];
   }
 
   // 상대 화면 한 칸: 성능을 위해 배경(하늘·빌딩·달·조명)과 효과(연기·분사·빛 번짐)는 빼고
@@ -1348,6 +1386,10 @@ const VERSION = '2026-10-28.45';
     g.fillStyle = '#334155';
     const dash = wd.distance % 60;
     for (let x = -dash; x < Wm; x += 60) g.fillRect(x, gy + 22, 30, 3);
+    if (wd.fx & 1) { // 화이트아웃 공격을 받는 중
+      g.fillStyle = 'rgba(248,250,252,0.95)';
+      g.fillRect(0, 0, Wm, MINI_H);
+    }
     const tn = wd.tunnel;
     if (tn && tn.x < Wm && tn.x + tn.len > 0) {
       const x1 = Math.max(0, tn.x), w = Math.min(Wm, tn.x + tn.len) - x1;
@@ -1359,7 +1401,7 @@ const VERSION = '2026-10-28.45';
     for (const o of wd.obstacles) {
       if (o.x > Wm || o.x < -300) continue;
       if (o.rival) {
-        const sp = miniRivalSprite(o.roll);
+        const sp = miniRivalSprite(o.roll, o.sky);
         const cx = o.x + RIVAL.w / 2, cy = gy - o.hop - AXIS_Y * CAR_SCALE;
         g.drawImage(sp, cx - (SPRITE_W / 2) * CAR_SCALE, cy - (SPRITE_H / 2) * CAR_SCALE, SPRITE_W * CAR_SCALE, SPRITE_H * CAR_SCALE);
       } else if (o.type.sprite) {
@@ -1371,6 +1413,17 @@ const VERSION = '2026-10-28.45';
     const frame = pl.onGround ? 0 : ((Math.round((pl.roll / (Math.PI * 2)) * ROLL_FRAMES) % ROLL_FRAMES) + ROLL_FRAMES) % ROLL_FRAMES;
     const cy = gy - pl.y - AXIS_Y * CAR_SCALE;
     g.drawImage(sprites[frame], px - (SPRITE_W / 2) * CAR_SCALE, cy - (SPRITE_H / 2) * CAR_SCALE, SPRITE_W * CAR_SCALE, SPRITE_H * CAR_SCALE);
+    if (wd.fx & 2) { // 안개 공격을 받는 중
+      g.fillStyle = 'rgba(203,213,225,0.8)';
+      g.fillRect(px + 50 * CAR_SCALE, 0, Wm, MINI_H);
+    }
+    if (wd.fx & 4) { // 방어막
+      g.strokeStyle = 'rgba(103,232,249,0.9)';
+      g.lineWidth = 6;
+      g.beginPath();
+      g.arc(px, cy, 70 * CAR_SCALE, 0, Math.PI * 2);
+      g.stroke();
+    }
   }
 
   // 화면 위쪽 topInset 높이에 상대 수만큼 가로로 균등하게 나눠 상대 게임 화면을 그림.
@@ -1466,14 +1519,14 @@ const VERSION = '2026-10-28.45';
       : playing ? ''
       : host ? (canStart() ? '모두 모이면 시작을 눌러 주세요' : '다른 사람이 끝날 때까지 기다려요')
       : '방장이 시작하면 같이 출발해요';
-    const key = JSON.stringify([players.map((p) => [p.id, p.name, p.score, p.status]), room.host, playing, msg, canStart(), topInset]);
+    const key = JSON.stringify([players.map((p) => [p.id, p.name, p.score, p.status]), room.host, playing, msg, canStart(), topInset, room.mode]);
     if (key === roomRenderKey) return;
     roomRenderKey = key;
     // 게임 중 상대 화면 줄이 있으면 점수는 거기서 보이므로 방 패널은 숨겨 내 화면을 가리지 않게 함
     roomEl.hidden = !!playing && topInset > 0;
     roomEl.classList.toggle('playing', !!playing);
     document.getElementById('room-title').textContent = roomTitle(room.code);
-    document.getElementById('room-code').textContent = `코드 ${room.code}`;
+    document.getElementById('room-code').textContent = `코드 ${room.code}${room.mode ? ` · ${modeLabel(room.mode)}` : ''}`;
     document.getElementById('room-count').textContent = `${room.players.size}/${ROOM_MAX}`;
     roomList.replaceChildren(...players.map((p) => {
       const li = document.createElement('li');
@@ -1510,9 +1563,9 @@ const VERSION = '2026-10-28.45';
   mpName.addEventListener('keydown', (e) => { if (e.key === 'Enter') mpNext(); });
   document.getElementById('mp-rename').addEventListener('click', () => { mpStep(1); mpMsg.textContent = ''; mpName.focus(); });
   document.getElementById('mp-close').addEventListener('click', closeMp);
-  document.getElementById('mp-create').addEventListener('click', () => {
-    joinRoom(Array.from({ length: 4 }, () => ROOM_CHARS[Math.floor(Math.random() * ROOM_CHARS.length)]).join(''));
-  });
+  const newCode = () => Array.from({ length: 4 }, () => ROOM_CHARS[Math.floor(Math.random() * ROOM_CHARS.length)]).join('');
+  document.getElementById('mp-create-item').addEventListener('click', () => joinRoom(newCode(), 'item'));
+  document.getElementById('mp-create-normal').addEventListener('click', () => joinRoom(newCode(), 'normal'));
   document.getElementById('mp-join').addEventListener('click', () => joinRoom(mpCode.value));
   mpCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(mpCode.value); });
   roomStart.addEventListener('click', () => {
@@ -1535,6 +1588,180 @@ const VERSION = '2026-10-28.45';
   // 초대 링크(?room=코드)로 들어오면 참여 창을 바로 띄움
   const inviteCode = (new URLSearchParams(location.search).get('room') || '').toUpperCase().slice(0, 4);
   if (inviteCode) openMp(inviteCode);
+
+  // ---------- 아이템전 ----------
+  // 점수가 ITEM_EVERY 점 오를 때마다 무작위 아이템 1개 (공격·방어 합쳐 최대 ITEM_MAX 개 보관, 꽉 차면 버림).
+  // 공격 아이템은 달리고 있는 상대 중 무작위 1명에게, 방어는 나에게만 적용
+  const ITEM_EVERY = 50;
+  const ITEM_MAX = 3;
+  const ATTACK_TIME = 3;   // 화이트아웃·안개 지속 시간(초)
+  const SHIELD_TIME = 8;   // 방어막 지속 시간(초)
+  const ITEM_INFO = {
+    white: { icon: '⚪', name: '화이트아웃' },  // 상대 배경을 흰색으로
+    fog: { icon: '🌫️', name: '안개' },          // 상대 차 앞에 안개
+    mint: { icon: '🚙', name: '민트 라이벌' },  // 상대에게 뛰어넘어 오는 민트 라이벌
+    sky: { icon: '🚘', name: '하늘 라이벌' },   // 상대에게 뛰지 않는 하늘색 라이벌
+    shield: { icon: '🛡️', name: '방어막' },    // 받은 공격 제거 + 일정 시간 공격 막기
+  };
+  const ITEM_KINDS = Object.keys(ITEM_INFO);
+  const itemsEl = document.getElementById('items');
+  let items = [], nextItemAt = ITEM_EVERY, whiteUntil = 0, fogUntil = 0, shieldUntil = 0, itemsKey = '';
+
+  function itemMode() {
+    return !!room && room.mode === 'item';
+  }
+
+  function resetItems() {
+    items = [];
+    nextItemAt = ITEM_EVERY;
+    whiteUntil = fogUntil = shieldUntil = 0;
+  }
+
+  function itemTick() {
+    if (!itemMode()) return;
+    while (score >= nextItemAt) {
+      nextItemAt += ITEM_EVERY;
+      if (items.length >= ITEM_MAX) continue;
+      const k = ITEM_KINDS[Math.floor(Math.random() * ITEM_KINDS.length)];
+      items.push(k);
+      popup(`🎁 ${ITEM_INFO[k].name} 획득!`, '#a78bfa');
+    }
+  }
+
+  function useItem(i) {
+    if (state !== 'playing' || paused || !itemMode() || !items[i]) return;
+    const k = items[i];
+    const info = ITEM_INFO[k];
+    let target = null;
+    if (k !== 'shield') {
+      const alive = [...room.players.values()].filter((p) => p.id !== myId && p.status === 'playing');
+      if (!alive.length) { popup('공격할 상대가 없어요', '#94a3b8'); return; } // 아이템은 그대로 둠
+      target = alive[Math.floor(Math.random() * alive.length)];
+    }
+    items.splice(i, 1);
+    if (k === 'shield') {
+      // 지금 받은 공격 제거: 화이트아웃·안개 끝내고, 아직 다가오는 공격 차량은 치움 (머리 위를 넘는 중인 라이벌은 그대로)
+      whiteUntil = fogUntil = 0;
+      obstacles = obstacles.filter((o) => !o.attack || o.passed || (o.rival && o.t >= 0 && !o.landed) || o.x < player.x + 60 * CAR_SCALE);
+      shieldUntil = clock + SHIELD_TIME;
+      popup(`${info.icon} 방어막 ${SHIELD_TIME}초!`, '#67e8f9');
+    } else {
+      room.ch.send({ type: 'broadcast', event: 'attack', payload: { from: myId, to: target.id, kind: k } });
+      popup(`${info.icon} ${info.name} → ${target.name}`, '#a78bfa');
+    }
+  }
+
+  function receiveAttack({ from, to, kind }) {
+    const info = ITEM_INFO[kind];
+    if (!info || kind === 'shield' || to !== myId || state !== 'playing' || !itemMode()) return;
+    const who = (room.players.get(from) || {}).name || '상대';
+    if (clock < shieldUntil) {
+      popup(`🛡️ ${who}의 ${info.name} 막음!`, '#67e8f9');
+      return;
+    }
+    popup(`${info.icon} ${who}의 ${info.name}!`, '#f87171');
+    if (kind === 'white') whiteUntil = clock + ATTACK_TIME;
+    else if (kind === 'fog') fogUntil = clock + ATTACK_TIME;
+    else forceRival(kind === 'sky');
+  }
+
+  // 공격으로 라이벌을 바로 등장시킴. 이미 오고 있는 차량을 다 지난 뒤에 오게 하고, 다음 차량도 그만큼 늦춰
+  // 피할 수 없는 배치는 만들지 않음 (점프 착지 여유 GAP 초)
+  function forceRival(sky) {
+    const GAP = 0.9;
+    // 각 차량이 내 차를 다 지나가는 시각(초 후)
+    const done = (o) => o.rival && !o.sky ? (o.x - o.jumpAt) / speed + ROLL_TIME + 0.3 : (o.x + o.w - player.x) / speed;
+    let t = 0;
+    for (const o of obstacles) if (!o.passed && !(o.rival && o.t >= 0)) t = Math.max(t, done(o));
+    const x = Math.max(W + 40, player.x + speed * (t + GAP));
+    const o = addRival(x);
+    o.attack = true;
+    if (sky) {
+      o.sky = true;
+      o.type = SKY_RIVAL;
+      o.landed = true; // 뛰지 않음
+    }
+    // 다음 일반 차량은 이 라이벌이 지나간 뒤에 오도록
+    spawnTimer = Math.max(spawnTimer, done(o) + GAP - (W + 40 - player.x) / speed);
+    burst = 0;
+  }
+
+  // 공격 효과 투명도: 시작·끝에 짧게 페이드
+  function effectAlpha(until) {
+    const left = until - clock;
+    if (left <= 0) return 0;
+    return Math.max(0, Math.min(1, left / 0.3, (ATTACK_TIME - left) / 0.2 + 0.2));
+  }
+
+  // 화이트아웃: 배경(하늘·도로·터널)을 흰색으로 덮고 차량은 그 위에 그림
+  function drawWhiteout() {
+    const a = effectAlpha(whiteUntil);
+    if (!a) return;
+    ctx.fillStyle = `rgba(248,250,252,${0.97 * a})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // 안개: 내 차 앞쪽을 반투명하게 가림 (다가오는 차가 흐릿하게 보이는 정도)
+  function drawFog() {
+    const a = effectAlpha(fogUntil);
+    if (!a) return;
+    const x0 = player.x + 50 * CAR_SCALE;
+    const grad = ctx.createLinearGradient(x0, 0, x0 + 200, 0);
+    grad.addColorStop(0, 'rgba(203,213,225,0)');
+    grad.addColorStop(1, `rgba(203,213,225,${0.8 * a})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(x0, 0, W - x0, H);
+    // 흘러가는 안개 덩어리
+    for (let i = 0; i < 7; i++) {
+      const span = Math.max(1, W - x0 - 100);
+      const fx = x0 + 100 + ((i * 173 + clock * 60) % span);
+      glow(fx, groundY - 30 - (i % 3) * 70, 110, '226,232,240', 0.35 * a);
+    }
+  }
+
+  function drawShield() {
+    if (clock >= shieldUntil) return;
+    const left = shieldUntil - clock;
+    const a = left < 1.5 ? 0.5 + 0.5 * Math.sin(clock * 20) : 1; // 끝나기 전 깜빡임
+    const cx = player.x, cy = groundY - player.y - AXIS_Y * CAR_SCALE;
+    glow(cx, cy, 110, '103,232,249', 0.25 * a);
+    ctx.strokeStyle = `rgba(103,232,249,${0.8 * a})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 70 * CAR_SCALE, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 아이템 칸 (HTML): 바뀔 때만 다시 만듦 (매 프레임 호출)
+  function renderItems() {
+    const show = itemMode() && state === 'playing';
+    const shieldLeft = clock < shieldUntil ? Math.ceil(shieldUntil - clock) : 0;
+    const key = show ? `${items.join()}|${nextItemAt}|${shieldLeft}` : '';
+    if (key === itemsKey) return;
+    itemsKey = key;
+    itemsEl.hidden = !show;
+    if (!show) return;
+    const slots = [];
+    for (let i = 0; i < ITEM_MAX; i++) {
+      const k = items[i];
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = k ? '' : 'empty';
+      b.setAttribute('aria-label', k ? `${ITEM_INFO[k].name} 사용` : '빈 칸');
+      b.innerHTML = `<span class="key">${i + 1}</span><span class="ic">${k ? ITEM_INFO[k].icon : '·'}</span><span>${k ? ITEM_INFO[k].name.slice(0, 5) : ''}</span>`;
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); useItem(i); });
+      slots.push(b);
+    }
+    const info = document.createElement('div');
+    info.className = 'info';
+    info.innerHTML = `🎁 ${nextItemAt}점${shieldLeft ? `<span class="shield">🛡️ ${shieldLeft}초</span>` : ''}`;
+    itemsEl.replaceChildren(...slots, info);
+  }
+  itemsEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+
+  function modeLabel(mode) {
+    return mode === 'item' ? '🎁 아이템전' : mode === 'normal' ? '🚕 노템전' : '';
+  }
 
   // ---------- 배경: 영상 속 야간 시연장 ----------
 
@@ -1730,6 +1957,8 @@ const VERSION = '2026-10-28.45';
   const TAXI = { color: wrapColor, taxi: true };
   // 라이벌: 같은 차체에 민트 단색 랩핑 (택시 스트라이프·도어 데칼·루프 표시등 없음)
   const RIVAL_MINT = { color: () => '#6ee7b7', taxi: false };
+  // 아이템전 하늘색 라이벌: 뛰지 않고 도로로 달려오는 차 (일반 차량처럼 뛰어넘어야 함)
+  const RIVAL_SKY = { color: () => '#7dd3fc', taxi: false };
 
   function topAt(x) {
     for (let i = 1; i < PROFILE.length; i++) {
@@ -1820,6 +2049,7 @@ const VERSION = '2026-10-28.45';
 
   const MESH = buildMesh(TAXI);
   const RIVAL_MESH = buildMesh(RIVAL_MINT);
+  const SKY_MESH = buildMesh(RIVAL_SKY);
   const WHEELS = [];
   for (const x of [-32, 33]) for (const side of [1, -1]) WHEELS.push({ x, z: (HALF_WIDTH + 0.6) * side });
 
@@ -2110,6 +2340,7 @@ const VERSION = '2026-10-28.45';
   // ---------- 라이벌 차량 (우리 차와 같은 모델, 왼쪽을 향해 달려옴) ----------
   // 판정용 크기: 차체 길이 약 106, 바퀴 아래~지붕 약 36 (모델 단위) × CAR_SCALE
   const RIVAL = { name: 'rival', w: Math.round(106 * CAR_SCALE), h: Math.round(36 * CAR_SCALE), hitTop: 0.25, points: 3 }; // 통과 시 '안전운전' 보너스 3점
+  const SKY_RIVAL = { ...RIVAL, name: 'sky', points: 1 };
 
   function updateRival(o, dt) {
     o.wheel += speed * dt / 14;
@@ -2156,7 +2387,7 @@ const VERSION = '2026-10-28.45';
     ctx.rotate(o.pitch); // 왼쪽을 향하므로 시계 방향 회전이 기수 들림
     ctx.scale(-CAR_SCALE, CAR_SCALE); // 좌우 반전: 플레이어 쪽(왼쪽)을 향함
     if (flying) drawThrusters(o.roll, intensity, false);
-    renderRoadster(ctx, o.roll, o.wheel, RIVAL_MESH);
+    renderRoadster(ctx, o.roll, o.wheel, o.sky ? SKY_MESH : RIVAL_MESH);
     if (flying) drawThrusters(o.roll, intensity, true);
     ctx.restore();
     if (!flying) glow(o.x + o.w * 0.03, groundY - o.h * 0.45, 16, '224,242,254', 0.55);
@@ -2656,10 +2887,13 @@ const VERSION = '2026-10-28.45';
     ctx.setTransform(dpr * viewScale, 0, 0, dpr * viewScale, 0, topInset * dpr);
     drawBackground();
     drawTunnelBack();
+    drawWhiteout();
     for (const o of obstacles) drawObstacle(o);
     drawParticles('smoke');
     drawRoadster();
+    drawShield();
     drawTunnelFront();
+    drawFog();
     drawParticles('spark');
     drawPopups();
     drawHUD();
@@ -2673,6 +2907,7 @@ const VERSION = '2026-10-28.45';
     if (!paused) update(dt);
     roomTick(now);
     syncMpButton();
+    renderItems();
     draw();
     requestAnimationFrame(loop);
   }
