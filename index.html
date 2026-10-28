@@ -232,7 +232,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.48';
+const VERSION = '2026-10-28.49';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1073,14 +1073,26 @@ const VERSION = '2026-10-28.48';
   const LOBBY = 'car-jump-lobby';
   let lobbyCh = null, lobbyReady = false, lobbyMeta = '';
 
-  function openLobby() {
-    if (lobbyCh || !sbClient) return;
-    const ch = sbClient.channel(LOBBY, { config: { presence: { key: myId } } });
+  // 같은 이름의 채널을 막 닫는 중이면 supabase-js 가 그 (닫히는) 채널을 그대로 돌려줘
+  // 새 구독이 동작하지 않음 → 남아 있는 채널을 먼저 완전히 닫고 새로 만듦
+  async function freshChannel(name, opts) {
+    const stale = sbClient.getChannels().find((c) => c.topic === `realtime:${name}`);
+    if (stale) await sbClient.removeChannel(stale);
+    return sbClient.channel(name, opts);
+  }
+
+  let lobbyOpening = false;
+  async function openLobby() {
+    if (lobbyCh || lobbyOpening || !sbClient) return;
+    lobbyOpening = true;
+    const ch = await freshChannel(LOBBY, { config: { presence: { key: myId } } });
+    lobbyOpening = false;
+    if (lobbyCh) return;
     lobbyCh = ch;
     ch.on('presence', { event: 'sync' }, () => { if (lobbyCh === ch) renderLobby(); })
       .subscribe((status) => {
         if (lobbyCh !== ch) return;
-        if (status === 'SUBSCRIBED') { lobbyReady = true; lobbyMeta = ''; lobbySync(); renderLobby(); }
+        if (status === 'SUBSCRIBED') { lobbyReady = true; lobbyMeta = ''; lobbySync(); renderLobby(); closeLobbyIfIdle(); }
       });
   }
 
@@ -1236,7 +1248,7 @@ const VERSION = '2026-10-28.48';
       for (const b of mpDialog.querySelectorAll('button')) b.disabled = false;
       return;
     }
-    const ch = sbClient.channel(`car-jump-room-${code}`, { config: { presence: { key: myId }, broadcast: { self: false } } });
+    const ch = await freshChannel(`car-jump-room-${code}`, { config: { presence: { key: myId }, broadcast: { self: false } } });
     const r = { code, ch, players: new Map(), host: null, mode, me: { name, joined: Date.now() } };
     ch.on('presence', { event: 'sync' }, () => onPresence(r))
       .on('broadcast', { event: 'start' }, () => { if (room === r) startCountdown(); })
@@ -1270,8 +1282,9 @@ const VERSION = '2026-10-28.48';
     }
     r.players = new Map(list.slice(0, ROOM_MAX).map((p) => {
       const old = prev.get(p.id);
-      if (!old) return [p.id, p];
-      return [p.id, { ...p, frame: old.frame, frameAt: old.frameAt, ...(old.t > p.t ? { score: old.score, status: old.status, t: old.t } : {}) }];
+      const now = performance.now();
+      if (!old) return [p.id, { ...p, syncAt: now }];
+      return [p.id, { ...p, frame: old.frame, frameAt: old.frameAt, syncAt: p.t !== old.t ? now : old.syncAt, ...(old.t > p.t ? { score: old.score, status: old.status, t: old.t } : {}) }];
     }));
     r.host = list[0] && list[0].id;
     // 방 모드는 방을 만든 사람에게서 시작해 모두가 자기 정보에 함께 올려 둠 (방장이 나가도 유지)
@@ -1317,8 +1330,13 @@ const VERSION = '2026-10-28.48';
     if (state === 'playing' && !paused && clock - sentAt >= FRAME_SEND) {
       sendFrame();
       renderRoom();
+    } else if (now - roomCheckAt > 1000) {
+      // 멈춘 사람이 생기면 시작 버튼이 풀리도록 가끔 다시 확인
+      roomCheckAt = now;
+      renderRoom();
     }
   }
+  let roomCheckAt = 0;
 
   // 상대가 생기거나 모두 나가면 화면 위쪽 상대 화면 줄을 넣거나 빼고 다시 배치
   function relayout() {
@@ -1509,8 +1527,17 @@ const VERSION = '2026-10-28.48';
     renderRoom();
   }
 
+  // '달리는 중'인데 STALE_MS 동안 게임 화면 정보가 오지 않은 사람 (새로고침·창 닫기 후 접속 정보만 남은 경우,
+  // 앱 전환·일시정지로 멈춘 경우). 공격 대상·시작 대기·순위의 '달리는 중' 인원에서 뺌
+  const STALE_MS = 3000;
+  function running(p) {
+    if (p.status !== 'playing') return false;
+    if (p.id === myId) return state === 'playing';
+    return performance.now() - Math.max(p.frameAt || 0, p.syncAt || 0) < STALE_MS;
+  }
+
   function canStart() {
-    return room && room.host === myId && !countdownAt && [...room.players.values()].every((p) => p.status !== 'playing');
+    return room && room.host === myId && !countdownAt && ![...room.players.values()].some(running);
   }
 
   function renderRoom() {
@@ -1643,7 +1670,8 @@ const VERSION = '2026-10-28.48';
     const info = ITEM_INFO[k];
     let target = null;
     if (k !== 'shield') {
-      const alive = [...room.players.values()].filter((p) => p.id !== myId && p.status === 'playing');
+      // 지금 이 방에서 실제로 달리고 있는 상대만 (running: 접속 정보만 남은 사람·멈춘 사람 제외)
+      const alive = [...room.players.values()].filter((p) => p.id !== myId && running(p));
       if (!alive.length) { popup('공격할 상대가 없어요', '#94a3b8'); return; } // 아이템은 그대로 둠
       target = alive[Math.floor(Math.random() * alive.length)];
     }
@@ -1655,14 +1683,16 @@ const VERSION = '2026-10-28.48';
       shieldUntil = clock + SHIELD_TIME;
       popup(`${info.icon} 방어막 ${SHIELD_TIME}초!`, '#67e8f9');
     } else {
-      room.ch.send({ type: 'broadcast', event: 'attack', payload: { from: myId, to: target.id, kind: k } });
+      room.ch.send({ type: 'broadcast', event: 'attack', payload: { room: room.code, from: myId, to: target.id, kind: k } });
       popup(`${info.icon} ${info.name} → ${target.name}`, '#a78bfa');
     }
   }
 
-  function receiveAttack({ from, to, kind }) {
+  function receiveAttack({ room: code, from, to, kind }) {
     const info = ITEM_INFO[kind];
     if (!info || kind === 'shield' || to !== myId || state !== 'playing' || !itemMode()) return;
+    // 같은 방 사람이 보낸 공격만 받음
+    if (code !== room.code || from === myId || !room.players.has(from)) return;
     const who = (room.players.get(from) || {}).name || '상대';
     if (clock < shieldUntil) {
       popup(`🛡️ ${who}의 ${info.name} 막음!`, '#67e8f9');
@@ -2790,7 +2820,7 @@ const VERSION = '2026-10-28.48';
     return {
       rank: 1 + ps.filter((p) => p.id !== myId && p.score > score).length,
       n: ps.length,
-      alive: ps.filter((p) => p.status === 'playing').length,
+      alive: ps.filter(running).length,
     };
   }
 
