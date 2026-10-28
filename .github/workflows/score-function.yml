@@ -1,0 +1,46 @@
+# 랭킹 서버: 테스트 → (main 에 올라오면) Edge Function 자동 배포
+# 자동 배포는 저장소 시크릿 SUPABASE_ACCESS_TOKEN 이 있을 때만 (없으면 테스트만 하고 건너뜀). 설정 방법은 supabase/README.md
+name: 랭킹 서버
+
+on:
+  push:
+    branches: [main]
+    paths: ['index.html', 'supabase/**', 'tests/server/**', '.github/workflows/score-function.yml']
+  pull_request:
+    paths: ['index.html', 'supabase/**', 'tests/server/**', '.github/workflows/score-function.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: 테스트 (규칙 코드와 서버용 파일 일치 · SQL · 리플레이 검증 · Edge Function)
+        working-directory: tests/server
+        run: |
+          npm install --no-audit --no-fund
+          npm test
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 시크릿이 없으면 건너뜀
+        if: env.SUPABASE_ACCESS_TOKEN == ''
+        run: echo "::notice::SUPABASE_ACCESS_TOKEN 시크릿이 없어 Edge Function 자동 배포를 건너뜀 (supabase/README.md 참고)"
+      - uses: supabase/setup-cli@v1
+        if: env.SUPABASE_ACCESS_TOKEN != ''
+        with:
+          version: latest
+      - name: Edge Function 배포
+        if: env.SUPABASE_ACCESS_TOKEN != ''
+        run: supabase functions deploy score --project-ref auwkyehgnxejxacoklqt --no-verify-jwt

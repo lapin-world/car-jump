@@ -23,15 +23,15 @@ rep("  function loop(now) {\n", "  function loop(now) {\n    window.__frames = (
 rep("    const who = room.players.get(from).name;",
     "    const who = room.players.get(from).name;\n    (window.__hits = window.__hits || []).push({ from: who, room: code, myRoom: room.code, kind, target: to.includes(myId) });")
 # 봇 + 관찰 함수
-rep("  function update(dt) {\n    clock += dt;", r"""  let autoHold = 0, autoItemAt = 0;
+rep("  let last = performance.now(), simAcc = 0;\n", r"""  let autoHold = 0, autoItemAt = 0;
   function autoPlayStep() {
     const p = player;
-    if (p.mode === 'ceiling' || p.mode === 'toCeiling') { if (clock - p.lastTap > 0.12) feverTap(); return; }
+    if (p.mode === 'ceiling' || p.mode === 'toCeiling') { if (clock - p.lastTap > 0.12) simInput('T'); return; }
     if (p.mode) return;
-    if (inTunnel()) { feverTap(); return; }
+    if (inTunnel()) { simInput('T'); return; }
     if (itemMode() && items.length && clock > autoItemAt) { autoItemAt = clock + 1 + Math.random() * 4; useItem(0); }
-    if (!p.onGround) { holding = autoHold > clock; return; }
-    holding = false;
+    if (!p.onGround) { simInput(autoHold > clock ? 'H' : 'R'); return; }
+    simInput('R');
     const ahead = obstacles.filter((o) => !o.passed && o.x + o.w > p.x - 40);
     // 머리 위로 넘어올 민트 라이벌이 가까우면 점프하지 않음
     const rivalNear = ahead.some((o) => o.rival && !o.sky && !o.landed && (o.t >= 0 || o.x - o.jumpAt < speed * 0.9));
@@ -42,11 +42,12 @@ rep("  function update(dt) {\n    clock += dt;", r"""  let autoHold = 0, autoIte
     if (dist < speed * window.__botLead) {
       const group = cars.filter((o) => o.x < next.x + 520);
       autoHold = group.length > 1 ? clock + HOLD_MAX : 0;
-      holding = autoHold > clock;
-      jump();
+      simInput(autoHold > clock ? 'H' : 'R');
+      simInput('T');
     }
   }
-  window.__botLead = 0.18;
+  window.__botLead = 0.1; // tune-bot.js 로 맞춘 값 (아이템전에서 50점 이상 나와 아이템이 생기도록)
+  window.__paused = () => paused;
   window.__dbg = () => ({
     name: room && room.me.name, room: room && room.code, mode: room && room.mode, host: room && room.players.get(room.host) && room.players.get(room.host).name,
     me: myId, state, score, items: items.slice(), countdown: !!countdownAt,
@@ -54,14 +55,18 @@ rep("  function update(dt) {\n    clock += dt;", r"""  let autoHold = 0, autoIte
     rank: roomRank(), topInset, frames: window.__frames || 0, hits: window.__hits || [],
     canStart: room ? canStart() : null, lobby: [...document.querySelectorAll('#mp-rooms li')].map((l) => l.textContent),
   });
-  function update(dt) {
-    clock += dt;
-    if (window.__bot && state === 'playing') autoPlayStep();""")
+  let last = performance.now(), simAcc = 0;
+""")
+# 봇은 게임 규칙 스텝마다 입력 (사람처럼 simInput 으로 → 리플레이에 기록되어 서버 검증을 거침)
+rep("      while (simAcc >= STEP) { simAcc -= STEP; simStep(); }",
+    "      while (simAcc >= STEP) { simAcc -= STEP; if (window.__bot && state === 'playing') autoPlayStep(); simStep(); }")
 # 실제 supabase-js 대신 로컬 중계 서버용 가짜 클라이언트
 rep("const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.99.3/dist/umd/supabase.js';",
     "const SUPABASE_JS = 'fake-supabase-ws.js';")
-# 랭킹 REST 는 테스트 서버(가짜)로
+# 랭킹 REST·Edge Function 은 테스트 서버(가짜)로
 rep("const SUPABASE_URL = 'https://auwkyehgnxejxacoklqt.supabase.co';", "const SUPABASE_URL = location.origin;")
+# 사람 확인(Turnstile)은 window.__tsKey 를 넣은 페이지만 (가짜 turnstile 로 흐름 확인)
+rep("const TURNSTILE_SITE_KEY = '';", "const TURNSTILE_SITE_KEY = window.__tsKey || '';")
 open(os.path.join(DST, 'index.html'), 'w', encoding='utf-8').write(s)
 shutil.copy(os.path.join(HERE, 'fake-supabase-ws.js'), DST)
 print('built')
