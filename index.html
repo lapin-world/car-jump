@@ -115,6 +115,26 @@
   #items .info { color: #cbd5e1; font: 600 12px system-ui, sans-serif; text-shadow: 0 1px 2px #000; }
   #items .info .shield { display: block; color: #67e8f9; }
   #mp .mode-row button { flex: 1; }
+  /* 아이템전 알림창: 채팅처럼 아래로 쌓이고 몇 초 뒤 사라짐. 가로 화면은 왼쪽 위(일시정지 버튼 아래), 세로 화면은 아이템 칸 위 */
+  #feed {
+    position: fixed; left: max(12px, env(safe-area-inset-left)); top: calc(var(--top, 0px) + max(64px, calc(env(safe-area-inset-top) + 52px)));
+    width: min(280px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 4px; pointer-events: none;
+    font: 600 13px system-ui, sans-serif;
+  }
+  @media (orientation: portrait) {
+    #feed { top: auto; bottom: calc(max(16px, env(safe-area-inset-bottom)) + 66px); }
+  }
+  #feed[hidden] { display: none; }
+  #feed div {
+    align-self: flex-start; max-width: 100%; box-sizing: border-box; padding: 4px 8px; border-radius: 8px;
+    background: rgba(2,6,23,0.65); color: #f8fafc; border-left: 3px solid var(--c, #94a3b8);
+    animation: feedfade 6s forwards;
+  }
+  @keyframes feedfade {
+    0% { opacity: 0; transform: translateY(6px); }
+    5%, 80% { opacity: 1; transform: none; }
+    100% { opacity: 0; }
+  }
   /* 열린 방 목록 */
   #mp .rooms-title { margin: 4px 0 6px; color: #cbd5e1; font-weight: 600; }
   #mp-rooms { list-style: none; margin: 0 0 10px; padding: 0; max-height: min(240px, 40vh); overflow-y: auto; }
@@ -185,6 +205,7 @@
 <div id="rank-side" hidden></div>
 <button id="pause-btn" type="button" aria-label="일시정지" hidden>❚❚</button>
 <div id="items" hidden></div>
+<div id="feed" hidden></div>
 <div id="mp-open" hidden>
   <button id="over-solo" class="solo" type="button">🚕 혼자 하기</button>
   <button id="over-multi" type="button">👥 같이 하기</button>
@@ -232,7 +253,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.51';
+const VERSION = '2026-10-28.52';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1649,7 +1670,44 @@ const VERSION = '2026-10-28.51';
     return !!room && room.mode === 'item';
   }
 
+  // ---------- 아이템전 알림창 (채팅처럼 쌓임) ----------
+  const FEED_MAX = 5;      // 한 번에 보이는 줄 수
+  const FEED_TIME = 6000;  // 한 줄이 보이는 시간(ms), CSS feedfade 와 같은 값
+  const feedEl = document.getElementById('feed');
+  let feed = [], feedSeq = 0, feedKey = '';
+
+  function feedPush(text, color) {
+    feed.push({ id: ++feedSeq, text, color, at: performance.now() });
+    if (feed.length > FEED_MAX) feed.shift();
+  }
+
+  // 매 프레임 호출: 보일 줄이 바뀔 때만 다시 그림 (새 줄 추가·오래된 줄 사라짐)
+  function renderFeed() {
+    const now = performance.now();
+    feed = feed.filter((m) => now - m.at < FEED_TIME);
+    const show = itemMode() && state === 'playing' && feed.length > 0;
+    const key = show ? feed.map((m) => m.id).join() : '';
+    if (key === feedKey) return;
+    feedKey = key;
+    feedEl.hidden = !show;
+    if (!show) return;
+    // 이미 있던 줄은 DOM 에서 빼지 않아야 사라지는 애니메이션이 처음부터 다시 시작하지 않음 → 지난 줄만 지우고 새 줄만 덧붙임
+    const ids = new Set(feed.map((m) => String(m.id)));
+    for (const el of [...feedEl.children]) if (!ids.has(el.dataset.id)) el.remove();
+    const shown = new Set([...feedEl.children].map((el) => el.dataset.id));
+    for (const m of feed) {
+      if (shown.has(String(m.id))) continue;
+      const el = document.createElement('div');
+      el.dataset.id = m.id;
+      el.textContent = m.text;
+      el.style.setProperty('--c', m.color);
+      el.style.animationDuration = `${FEED_TIME}ms`;
+      feedEl.append(el);
+    }
+  }
+
   function resetItems() {
+    feed = [];
     items = [];
     nextItemAt = ITEM_EVERY;
     whiteUntil = fogUntil = shieldUntil = whiteFrom = fogFrom = 0;
@@ -1662,7 +1720,7 @@ const VERSION = '2026-10-28.51';
       if (items.length >= ITEM_MAX) continue;
       const k = ITEM_KINDS[Math.floor(Math.random() * ITEM_KINDS.length)];
       items.push(k);
-      popup(`🎁 ${ITEM_INFO[k].name} 획득!`, '#a78bfa');
+      feedPush(`🎁 ${ITEM_INFO[k].icon} ${ITEM_INFO[k].name} 획득`, '#a78bfa');
     }
   }
 
@@ -1674,7 +1732,7 @@ const VERSION = '2026-10-28.51';
     if (k !== 'shield') {
       // 지금 이 방에서 실제로 달리고 있는 상대 모두 (running: 접속 정보만 남은 사람·멈춘 사람 제외)
       targets = [...room.players.values()].filter((p) => p.id !== myId && running(p));
-      if (!targets.length) { popup('공격할 상대가 없어요', '#94a3b8'); return; } // 아이템은 그대로 둠
+      if (!targets.length) { feedPush('공격할 상대가 없어요 (아이템은 그대로)', '#94a3b8'); return; }
     }
     items.splice(i, 1);
     if (k === 'shield') {
@@ -1683,21 +1741,26 @@ const VERSION = '2026-10-28.51';
       obstacles = obstacles.filter((o) => !o.attack || o.passed || (o.rival && o.t >= 0 && !o.landed) || o.x < player.x + 60 * CAR_SCALE);
       // 방어막 중에 또 쓰면 남은 시간에 더함
       shieldUntil = Math.max(shieldUntil, clock) + SHIELD_TIME;
-      popup(`${info.icon} 방어막 ${Math.ceil(shieldUntil - clock)}초!`, '#67e8f9');
+      feedPush(`${info.icon} 방어막 사용 (${Math.ceil(shieldUntil - clock)}초)`, '#67e8f9');
     } else {
       room.ch.send({ type: 'broadcast', event: 'attack', payload: { room: room.code, from: myId, to: targets.map((p) => p.id), kind: k } });
-      popup(`${info.icon} ${info.name} → ${targets.length > 1 ? `모두(${targets.length}명)` : targets[0].name}`, '#a78bfa');
+      feedPush(`나 → ${targets.length > 1 ? `모두(${targets.length}명)` : targets[0].name}: ${info.icon} ${info.name}`, '#a78bfa');
     }
   }
 
   function receiveAttack({ room: code, from, to, kind }) {
     const info = ITEM_INFO[kind];
-    if (!info || kind === 'shield' || !Array.isArray(to) || !to.includes(myId) || state !== 'playing' || !itemMode()) return;
+    if (!info || kind === 'shield' || !Array.isArray(to) || !itemMode()) return;
     // 같은 방 사람이 보낸 공격만 받음
     if (code !== room.code || from === myId || !room.players.has(from)) return;
-    const who = (room.players.get(from) || {}).name || '상대';
+    const who = room.players.get(from).name;
+    if (!to.includes(myId) || state !== 'playing') {
+      // 내가 대상이 아니면 (이미 끝났거나 대기 중) 알림만
+      feedPush(`${who} → ${to.length > 1 ? `모두(${to.length}명)` : (room.players.get(to[0]) || {}).name || '상대'}: ${info.icon} ${info.name}`, '#94a3b8');
+      return;
+    }
     if (clock < shieldUntil) {
-      popup(`🛡️ ${who}의 ${info.name} 막음!`, '#67e8f9');
+      feedPush(`🛡️ ${who}의 ${info.icon} ${info.name} 막음`, '#67e8f9');
       return;
     }
     if (kind === 'white' || kind === 'fog') {
@@ -1707,12 +1770,12 @@ const VERSION = '2026-10-28.51';
       const next = (stacked ? until : clock) + ATTACK_TIME;
       if (kind === 'white') { if (!stacked) whiteFrom = clock; whiteUntil = next; }
       else { if (!stacked) fogFrom = clock; fogUntil = next; }
-      popup(stacked ? `${info.icon} ${who}의 ${info.name} 추가! (${Math.ceil(next - clock)}초)` : `${info.icon} ${who}의 ${info.name}!`, '#f87171');
+      feedPush(`${who} → 나: ${info.icon} ${info.name}${stacked ? ` 추가 (총 ${Math.ceil(next - clock)}초)` : ''}`, '#f87171');
     } else {
       // 라이벌은 받을 때마다 한 대씩 더 (앞 라이벌 뒤에 차례로 배치)
       forceRival(kind === 'sky');
       const n = obstacles.filter((o) => o.attack && !o.passed && !!o.sky === (kind === 'sky')).length;
-      popup(n > 1 ? `${info.icon} ${who}의 ${info.name} x${n}!` : `${info.icon} ${who}의 ${info.name}!`, '#f87171');
+      feedPush(`${who} → 나: ${info.icon} ${info.name}${n > 1 ? ` x${n}` : ''}`, '#f87171');
     }
   }
 
@@ -2968,6 +3031,7 @@ const VERSION = '2026-10-28.51';
     roomTick(now);
     syncMpButton();
     renderItems();
+    renderFeed();
     draw();
     requestAnimationFrame(loop);
   }
