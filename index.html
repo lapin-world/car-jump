@@ -23,6 +23,8 @@
   html, body { margin: 0; height: 100%; background: #020617; overflow: hidden; touch-action: none; }
   body { user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
   canvas { display: block; width: 100vw; height: 100vh; touch-action: none; } /* 실제 크기는 resize() 에서 보이는 화면(innerWidth/innerHeight)에 맞춤 */
+  #mini { position: fixed; left: 0; top: 0; pointer-events: none; } /* 같이 하기 상대 화면 (탭은 아래 게임 캔버스로). 크기는 drawRivalViews() 에서 */
+  #mini[hidden] { display: none; }
   /* 게임 오버 시 랭킹 패널 */
   #rank {
     position: fixed; left: 50%; top: 40%; transform: translateX(-50%); overflow-y: auto; /* top·max-height 는 JS(layoutOver)에서 문구 아래로 맞춤 */
@@ -310,7 +312,7 @@
 </div>
 <script>
 // 배포 버전: 코드를 바꿔 배포할 때마다 함께 올려야 캐시된 예전 화면이 자동으로 갱신됨
-const VERSION = '2026-10-28.57';
+const VERSION = '2026-10-28.58';
 (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -1869,21 +1871,46 @@ const VERSION = '2026-10-28.57';
   }
 
   // 화면 위쪽 topInset 높이에 상대 수만큼 가로로 균등하게 나눠 상대 게임 화면을 그림.
-  // 별도 캔버스에 초당 MINI_FPS 번만 다시 그리고, 매 프레임은 그 이미지를 복사만 함
+  // 게임 캔버스 위에 겹친 별도 캔버스에 초당 MINI_FPS 번만 다시 그림. 예전처럼 매 프레임 게임 캔버스로
+  // 복사하면 고해상도 폰에서 그 복사가 프레임 시간의 대부분을 차지해서, 겹쳐 보이는 건 브라우저 합성에 맡김
+  // 작은 화면이라 고해상도 폰에서도 MINI_DPR 배까지만 그림
   const MINI_FPS = 30;
+  const MINI_DPR = 2;
   const miniCanvas = document.createElement('canvas');
-  const miniCtx = miniCanvas.getContext('2d');
+  miniCanvas.id = 'mini';
+  miniCanvas.hidden = true;
+  canvas.after(miniCanvas);
+  const miniCtx = miniCanvas.getContext('2d', { alpha: false });
   let miniAt = 0;
+  // 칸 폭에 맞게 줄인 이름 (점수 자릿수가 바뀔 때만 다시 계산)
+  const miniNames = new Map();
+  function miniName(g, label, maxW) {
+    const key = `${label}|${Math.round(maxW)}`;
+    let text = miniNames.get(key);
+    if (text === undefined) {
+      let name = label;
+      while (name.length > 1 && g.measureText(name).width > maxW) name = name.slice(0, -1);
+      text = name === label ? name : `${name}…`;
+      if (miniNames.size > 200) miniNames.clear();
+      miniNames.set(key, text);
+    }
+    return text;
+  }
+
   function drawRivalViews() {
     const others = [...room.players.values()].filter((p) => p.id !== myId);
-    if (!others.length) return;
+    if (!others.length) { miniCanvas.hidden = true; return; }
     const now = performance.now();
     const chH = topInset;
-    if (miniCanvas.width !== Math.round(SW * dpr) || miniCanvas.height !== Math.round(chH * dpr)) {
-      miniCanvas.width = Math.round(SW * dpr);
-      miniCanvas.height = Math.round(chH * dpr);
+    const md = Math.min(dpr, MINI_DPR);
+    if (miniCanvas.width !== Math.round(SW * md) || miniCanvas.height !== Math.round(chH * md)) {
+      miniCanvas.width = Math.round(SW * md);
+      miniCanvas.height = Math.round(chH * md);
+      miniCanvas.style.width = `${SW}px`;
+      miniCanvas.style.height = `${chH}px`;
       miniAt = 0;
     }
+    miniCanvas.hidden = false;
     if (now - miniAt >= 1000 / MINI_FPS - 2) {
       miniAt = now;
       const g = miniCtx;
@@ -1895,7 +1922,7 @@ const VERSION = '2026-10-28.57';
         const wd = remoteWorld(rp, now, Math.max(90, Wm * 0.2));
         wd.px = Math.max(90, Wm * 0.2);
         g.save();
-        g.setTransform(dpr * s, 0, 0, dpr * s, x0 * dpr, 0);
+        g.setTransform(md * s, 0, 0, md * s, x0 * md, 0);
         g.beginPath();
         g.rect(0, 0, Wm, MINI_H);
         g.clip();
@@ -1903,7 +1930,7 @@ const VERSION = '2026-10-28.57';
         g.restore();
 
         // 이름·점수·상태 (화면 픽셀 기준)
-        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.setTransform(md, 0, 0, md, 0, 0);
         if (rp.status !== 'playing') {
           g.fillStyle = 'rgba(2,6,23,0.55)';
           g.fillRect(x0, 0, w, chH);
@@ -1919,10 +1946,7 @@ const VERSION = '2026-10-28.57';
         g.fillRect(x0, 0, w, 22);
         g.textAlign = 'left';
         g.fillStyle = '#f8fafc';
-        const scoreW = g.measureText(scoreText).width;
-        let name = label;
-        while (name.length > 1 && g.measureText(name).width > w - scoreW - 22) name = name.slice(0, -1);
-        g.fillText(name === label ? name : `${name}…`, x0 + 6, 16);
+        g.fillText(miniName(g, label, w - g.measureText(scoreText).width - 22), x0 + 6, 16);
         g.textAlign = 'right';
         g.fillStyle = '#fbbf24';
         g.fillText(scoreText, x0 + w - 6, 16);
@@ -1932,8 +1956,6 @@ const VERSION = '2026-10-28.57';
         if (i === others.length - 1) g.fillRect(0, chH - 1, SW, 1);
       });
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(miniCanvas, 0, 0);
   }
 
   function startCountdown() {
@@ -1976,6 +1998,7 @@ const VERSION = '2026-10-28.57';
     // 게임 중 상대 화면 줄이 있으면 점수는 거기서 보이므로 방 패널은 숨겨 내 화면을 가리지 않게 함
     roomEl.hidden = !!playing && topInset > 0;
     roomEl.classList.toggle('playing', !!playing);
+    if (roomEl.hidden) { roomRenderKey = 'hidden'; return; } // 안 보이는 동안은 점수가 바뀔 때마다 목록을 다시 만들지 않음 (다시 보일 때 새로 그림)
     document.getElementById('room-title').textContent = roomTitle(room.code);
     document.getElementById('room-code').textContent = `코드 ${room.code}${room.mode ? ` · ${modeLabel(room.mode)}` : ''}`;
     document.getElementById('room-count').textContent = `${room.players.size}/${ROOM_MAX}`;
@@ -3666,6 +3689,7 @@ const VERSION = '2026-10-28.57';
 
   function draw() {
     if (topInset) drawRivalViews();
+    else if (!miniCanvas.hidden) miniCanvas.hidden = true;
     ctx.setTransform(dpr * viewScale, 0, 0, dpr * viewScale, 0, topInset * dpr);
     drawBackground();
     drawTunnelBack();
