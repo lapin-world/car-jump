@@ -59,6 +59,11 @@ http.createServer((req, res) => {
     });
     return;
   }
+  if (url.pathname === '/rest/v1/rpc/log_visit') { // 접속 통계: 기록하지 않고 성공만 응답
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   if (url.pathname === '/rest/v1/scores') {
     const rows = [...scores.entries()].map(([name, score]) => ({ name, score })).sort((a, b) => b.score - a.score).slice(0, 10);
     res.writeHead(200, { 'Content-Type': 'application/json' });

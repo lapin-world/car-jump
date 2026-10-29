@@ -67,6 +67,24 @@ select used_at, ip, score, sim_ms, jsonb_array_length(replay->'ev') as inputs
 from private.games where lower(name) = lower('이름') order by used_at desc;
 ```
 
+## 접속 통계 (`visits.sql`)
+
+`anticheat.sql` 다음에 SQL Editor 에서 `visits.sql` 을 한 번 실행하면, 게임 화면이 페이지 접속(`visit`)과 게임 시작(`play`, 모드별)을 기록합니다.
+방문자는 브라우저마다 저장한 무작위 ID 로만 구분하고 이름·IP 는 저장하지 않습니다. 브라우저(anon)는 기록만 할 수 있고 조회는 SQL Editor 에서만 됩니다.
+(실행 전에는 기록 요청이 실패하지만 게임에는 영향 없음)
+
+```sql
+-- 날짜별 (한국 시간): 순 방문자 · 접속 수 · 플레이한 기기 수 · 게임 시작 수 · 모드별 시작 수
+select * from private.daily_stats limit 30;
+-- 전체 순 방문자 수
+select count(distinct visitor) from private.visits where kind = 'visit';
+-- 시간대별 접속 (최근 7일)
+select extract(hour from at at time zone 'Asia/Seoul') as hour, count(*)
+from private.visits where kind = 'visit' and at > now() - interval '7 days' group by 1 order by 1;
+```
+
+순 방문자는 기기(브라우저) 기준이라, 같은 사람이 다른 기기·사생활 보호 모드로 들어오면 따로 셉니다.
+
 ## 게임 규칙을 바꿀 때
 
 `index.html` 의 `// @sim-begin` ~ `// @sim-end` 사이 코드는 서버 검증과 공유됩니다. 이 부분을 고치면:
@@ -84,6 +102,7 @@ node supabase/build-sim.mjs   # functions/_shared/sim.js 와 index.html 의 SIM_
 | 파일 | 역할 |
 |---|---|
 | `anticheat.sql` | 게임 토큰 · 요청 제한 · 숨김 · 등록 함수 |
+| `visits.sql` | 접속 통계 (접속 · 게임 시작 기록, `daily_stats`) |
 | `functions/score/index.ts` | Edge Function 진입점 (Deno) |
 | `functions/score/handler.js` | 요청 처리 (start / submit) |
 | `functions/_shared/sim.js` | **자동 생성** — 리플레이 검증 (index.html 의 게임 규칙 코드) |

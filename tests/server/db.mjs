@@ -17,6 +17,7 @@ export async function makeDb({ legacyRows = true } = {}) {
   await run('reset_phrase.sql', (s) => s.replaceAll("'<리셋 문구>'", `'${RESET_PHRASE}'`));
   if (legacyRows) await db.exec(`insert into public.scores (name, score) values ('조작범', 9999), ('예전유저', 50);`);
   await run('anticheat.sql');
+  await run('visits.sql');
   return db;
 }
 

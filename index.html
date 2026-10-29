@@ -577,6 +577,7 @@ const VERSION = '2026-10-28.59';
     popups = [];
     game = takeSession();
     simStart(game.seed, itemMode());
+    logVisit('play', room ? (itemMode() ? 'item' : 'normal') : contest ? 'contest' : 'solo');
     pauseBtn.hidden = false;
     botsStart();
     roomStatus();
@@ -1138,6 +1139,25 @@ const VERSION = '2026-10-28.59';
       return data;
     });
   }
+
+  // ---------- 접속 통계 (supabase/visits.sql) ----------
+  // 페이지 접속과 게임 시작만 기록. 방문자는 이 브라우저에 저장한 무작위 ID 로만 구분 (이름·점수는 보내지 않음)
+  let visitorId = null;
+  try {
+    visitorId = localStorage.getItem('roadster-visitor');
+    if (!visitorId) { visitorId = crypto.randomUUID(); localStorage.setItem('roadster-visitor', visitorId); }
+  } catch { visitorId = null; }
+
+  function logVisit(kind, mode = null) {
+    fetch(`${SUPABASE_URL}/rest/v1/rpc/log_visit`, {
+      method: 'POST',
+      keepalive: true,
+      headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_visitor: visitorId, p_kind: kind, p_mode: mode }),
+    }).catch(() => {}); // 통계 실패는 게임에 영향 없게 무시
+  }
+
+  logVisit('visit');
 
   // 다음 판에 쓸 시드·토큰을 미리 받아 둠 (시작을 누르면 기다리지 않고 바로 출발하도록)
   function fetchSession() {

@@ -72,4 +72,35 @@ s = await start(); await backdate(s.token, 100);
 const rr = await finish(s.token, '초기화 해줘', 10, 60000);
 check('리셋 문구', rr === 'reset' && (await one(`select count(*)::int as n from public.scores`)).n === 0);
 
+// 접속 통계 (visits.sql)
+await db.exec((await import('node:fs')).readFileSync(new URL('../../supabase/visits.sql', import.meta.url), 'utf8'));
+check('visits.sql 다시 실행해도 됨', true);
+const vid = '11111111-1111-1111-1111-111111111111';
+const logAs = async (args, ip = '') => {
+  await db.query(`select set_config('request.headers', $1, false)`, [ip ? JSON.stringify({ 'x-forwarded-for': `${ip}, 10.0.0.1` }) : '']);
+  return asRole('anon', `select public.log_visit(${args})`);
+};
+await logAs(`'${vid}', 'visit'`);
+await logAs(`'${vid}', 'visit', 'solo'`); // visit 의 mode 는 버림
+await logAs(`'${vid}', 'play', 'solo'`);
+await logAs(`null, 'play', 'item'`);
+await logAs(`'${vid}', 'play', 'hack'`); // 없는 모드는 무시
+await logAs(`'${vid}', 'click'`);         // 없는 종류는 무시
+await logAs(`'${vid}', 'play'`);          // play 인데 모드 없음은 무시
+const rows = (await db.query(`select visitor, kind, mode from private.visits order by id`)).rows;
+check('log_visit 기록', JSON.stringify(rows.map((r) => [r.kind, r.mode])) === JSON.stringify([['visit', null], ['visit', null], ['play', 'solo'], ['play', 'item']]), JSON.stringify(rows));
+err = await asRole('anon', `select * from private.visits`).then(() => null, (e) => e.message);
+check('anon 은 visits 조회 불가', !!err, err);
+err = await asRole('anon', `insert into private.visits (kind) values ('visit')`).then(() => null, (e) => e.message);
+check('anon 은 visits 에 직접 쓰기 불가', !!err, err);
+err = await asRole('anon', `select * from private.daily_stats`).then(() => null, (e) => e.message);
+check('anon 은 daily_stats 조회 불가', !!err, err);
+const day = (await db.query(`select * from private.daily_stats`)).rows[0];
+const dayN = Object.fromEntries(Object.entries(day).filter(([k]) => k !== 'day').map(([k, v]) => [k, Number(v)]));
+check('daily_stats', JSON.stringify(dayN) === JSON.stringify({ visitors: 1, visits: 2, players: 1, plays: 2, solo: 1, normal: 0, item: 1, contest: 0 }), JSON.stringify(dayN));
+const before = Number((await one(`select count(*) as n from private.visits`)).n);
+for (let i = 0; i < 305; i++) await logAs(`'${vid}', 'visit'`, '7.7.7.7');
+const added = Number((await one(`select count(*) as n from private.visits`)).n) - before;
+check('접속 기록 제한 (IP당 10분 300번, x-forwarded-for 첫 IP 기준)', added === 300, `${added}번 기록`);
+
 done();
