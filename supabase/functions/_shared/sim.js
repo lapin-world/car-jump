@@ -1,6 +1,6 @@
 // 자동 생성 파일 — 직접 고치지 말 것. index.html 의 게임 규칙을 고친 뒤 node supabase/build-sim.mjs 실행
 // 브라우저와 같은 규칙 코드로 게임을 다시 돌려(리플레이) 점수를 확인함
-export const SIM_VERSION = '087844aab54f';
+export const SIM_VERSION = '5a298b9c3838';
 
 // 한 판 최대 길이(스텝, 3시간)·입력 수, 받을 수 있는 공격 수 (아이템전).
 // 공격은 상대가 점수 ITEM_EVERY(50)점마다 얻는 아이템이라 상대 3명이 아무리 빨리 득점해도 (초당 약 4점) 1분에 약 15개,
@@ -17,7 +17,7 @@ export function createGame() {
   const JUMP_VELOCITY = 830;
   const CAR_SCALE = 1.6; // 로드스터 크기 배율
   const ROLLS_PER_JUMP = 1; // 점프당 배럴롤 횟수 (영상 기준 약 1바퀴)
-  const START_SPEED = 380;
+  const START_SPEED = 430;
   const MAX_SPEED = 900;
   const SPEED_GAIN = 9; // 초당 속도 증가량
   // 길게 누르기: 상승 중 누르고 있는 동안(최대 HOLD_MAX초) 중력을 줄여 더 높고 길게 점프
@@ -29,7 +29,7 @@ export function createGame() {
   // 라이벌 차량: 차량을 ROLL_AFTER대 넘긴 뒤부터 가끔(ROLL_CHANCE) 우리 차와 같은 모델(민트 단색 랩핑)이
   // 배럴롤 점프로 우리 차를 뛰어넘어 뒤로 지나감. 가만히 있으면 머리 위로 지나가고, 그 순간 점프하면 공중 충돌.
   // 체공 시간은 속도와 상관없이 ROLL_TIME초로 고정해 우리 차처럼 느긋하게 돎
-  const ROLL_AFTER = 25;
+  const ROLL_AFTER = 10;
   const ROLL_CHANCE = 0.2;
   const ROLL_TIME = 1.1;  // 체공 시간(초) — 우리 차 탭 점프 0.9초, 길게 누르기 1.26초
   // 뛰어넘기 최고 높이: 우리 차 위를 지날 때 라이벌 바닥이 약 317 이상 → 길게 누른 점프(정점 약 333)로도 위로 넘을 수 없고 충돌
