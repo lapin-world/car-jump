@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Kakao Taxi Jump</title>
+<title>Taxi Jump</title>
 <meta name="description" content="엔터 한 번으로 테슬라를 뛰어넘어라! 원버튼 점프 게임">
 <meta name="theme-color" content="#020617">
-<!-- 링크 공유 미리보기 (카카오톡·슬랙·페이스북 등: Open Graph / X: Twitter Card) -->
+<!-- 링크 공유 미리보기 (메신저·슬랙·페이스북 등: Open Graph / X: Twitter Card) -->
 <!-- og:image·og:url 은 배포 주소 기준 절대 경로여야 썸네일이 표시됨 -->
 <meta property="og:type" content="website">
-<meta property="og:title" content="Kakao Taxi Jump">
+<meta property="og:title" content="Taxi Jump">
 <meta property="og:description" content="엔터 한 번으로 테슬라를 뛰어넘어라! 원버튼 점프 게임">
 <meta property="og:image" content="https://lapin-world.github.io/car-jump/assets/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:url" content="https://lapin-world.github.io/car-jump/">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Kakao Taxi Jump">
+<meta name="twitter:title" content="Taxi Jump">
 <meta name="twitter:description" content="엔터 한 번으로 테슬라를 뛰어넘어라!">
 <meta name="twitter:image" content="https://lapin-world.github.io/car-jump/assets/og-image.png">
 <style>
@@ -2084,7 +2084,7 @@ const VERSION = '2026-10-28.59';
     const url = `${location.origin}${location.pathname}?room=${room.code}`;
     e.currentTarget.blur();
     try {
-      if (navigator.share && isTouch) await navigator.share({ title: 'Kakao Taxi Jump 같이 하기', url });
+      if (navigator.share && isTouch) await navigator.share({ title: 'Taxi Jump 같이 하기', url });
       else { await navigator.clipboard.writeText(url); roomMsg.hidden = false; roomMsg.textContent = '초대 링크를 복사했어요'; roomRenderKey = ''; }
     } catch {}
   });
@@ -2754,7 +2754,7 @@ const VERSION = '2026-10-28.59';
   const SPRITE_W = 150, SPRITE_H = 120; // 차량 단위 기준 스프라이트 크기
   const YELLOW = '#fbbf24', GLASS = '#1e293b', DARK = '#111827', BODY = '#f1f5f9';
 
-  // 카카오 T 택시 랩핑: 흰 차체 + 뒤쪽 사선 노란 스트라이프 2줄
+  // 택시 랩핑: 흰 차체 + 뒤쪽 사선 노란 스트라이프 2줄
   // 스트라이프는 위로 갈수록 차 뒤쪽으로 기울어짐 (u = x + 1.1 * (y - 8))
   function wrapColor(x, y) {
     const u = x + 1.1 * (y - BODY_BOTTOM);
@@ -2842,11 +2842,11 @@ const VERSION = '2026-10-28.59';
       quad(q, [[43, 18, z], [50, 16.5, z], [50, 18, z], [43, 19.5, z]], '#e0f2fe', [0, side], { emissive: true });
       quad(q, [[-51, 19.5, z], [-47, 19.5, z], [-47, 22, z], [-51, 21.5, z]], '#ef4444', [0, side], { emissive: true });
       if (!livery.taxi) continue;
-      // 도어 데칼: 캐릭터 얼굴 + '카카오 T' 로고 (면보다 살짝 바깥, 그리기 전용)
+      // 도어 데칼: 캐릭터 얼굴 + 'TAXI' 로고 (면보다 살짝 바깥, 그리기 전용)
       const dz = (HALF_WIDTH + 0.4) * side;
       quad(q, [[-16, 12, dz], [-8, 12, dz], [-8, 20, dz], [-16, 20, dz]], BODY, [0, side], { decal: 'face', side });
       quad(q, [[2, 13, dz], [22, 13, dz], [22, 19, dz], [2, 19, dz]], BODY, [0, side], { decal: 'logo', side });
-      // 루프 kakao T 표시등 옆면
+      // 루프 TAXI 표시등 옆면
       quad(q, [[-10, 35, 5 * side], [6, 35, 5 * side], [6, 40, 5 * side], [-10, 40, 5 * side]], YELLOW, [0, side], { decal: 'sign', side, emissive: true });
     }
     if (livery.taxi) quad(q, [[-10, 40, 5], [6, 40, 5], [6, 40, -5], [-10, 40, -5]], YELLOW, [1, 0], { emissive: true });
@@ -2904,11 +2904,11 @@ const VERSION = '2026-10-28.59';
     if (face.decal === 'sign') {
       g.fillStyle = DARK;
       g.font = 'bold 3.4px system-ui, sans-serif';
-      g.fillText('kakao T', 0, 0.2);
+      g.fillText('TAXI', 0, 0.2);
     } else if (face.decal === 'logo') {
       g.fillStyle = shade(DARK, 1);
       g.font = 'bold 4.6px system-ui, sans-serif';
-      g.fillText('카카오 T', 0, 0.3);
+      g.fillText('TAXI', 0, 0.3);
     } else {
       // 동그란 곰 캐릭터 얼굴 (귀 + 눈 + 주둥이)
       const fur = shade('#f59e0b', k), dark = '#3f2a14';
@@ -3424,7 +3424,7 @@ const VERSION = '2026-10-28.59';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#f8fafc';
     ctx.font = '800 34px system-ui, sans-serif';
-    ctx.fillText('Kakao Taxi Jump', W / 2, y);
+    ctx.fillText('Taxi Jump', W / 2, y);
     ctx.fillStyle = '#fbbf24';
     ctx.font = 'bold 17px system-ui, sans-serif';
     ctx.fillText('테슬라를 뛰어 넘어라 !', W / 2, y + 34);
@@ -3434,6 +3434,11 @@ const VERSION = '2026-10-28.59';
     ctx.font = '15px system-ui, sans-serif';
     if (room) ctx.fillText(roomHint(), W / 2, y + 84); // 방 밖에서는 이 자리에 혼자 하기 / 같이 하기 버튼
     ctx.globalAlpha = 1;
+
+    // AI 제작 고지: 화면 맨 아래 (조작 안내 카드를 생략하는 낮은 화면에서도 보이게 먼저 그림)
+    ctx.fillStyle = 'rgba(203,213,225,0.75)';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('이 게임은 AI(Claude)를 활용해 제작되었습니다', W / 2, H - 12);
 
     const rows = [
       [isTouch ? '탭' : 'Enter / Space', '점프'],
@@ -3449,7 +3454,7 @@ const VERSION = '2026-10-28.59';
     const descW = Math.max(...rows.map((r) => ctx.measureText(r[1]).width));
     const cardW = padX * 2 + keyW + gap + descW;
     const cardH = padY * 2 + rowH * rows.length - 8;
-    const space = H - ground;
+    const space = H - ground - 22; // 맨 아래 AI 제작 고지 자리 비움
     if (space < cardH + 24) return; // 가로로 낮은 화면에서는 생략
     const cx = (W - cardW) / 2, cy = ground + Math.min(space * 0.3, space - cardH - 12);
 
