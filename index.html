@@ -3435,6 +3435,11 @@ const VERSION = '2026-10-28.59';
     if (room) ctx.fillText(roomHint(), W / 2, y + 84); // 방 밖에서는 이 자리에 혼자 하기 / 같이 하기 버튼
     ctx.globalAlpha = 1;
 
+    // AI 제작 고지: 화면 맨 아래 (조작 안내 카드를 생략하는 낮은 화면에서도 보이게 먼저 그림)
+    ctx.fillStyle = 'rgba(203,213,225,0.75)';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('이 게임은 AI(Claude)를 활용해 제작되었습니다', W / 2, H - 12);
+
     const rows = [
       [isTouch ? '탭' : 'Enter / Space', '점프'],
       ['길게 누르기', '더 높이, 더 멀리'],
@@ -3449,7 +3454,7 @@ const VERSION = '2026-10-28.59';
     const descW = Math.max(...rows.map((r) => ctx.measureText(r[1]).width));
     const cardW = padX * 2 + keyW + gap + descW;
     const cardH = padY * 2 + rowH * rows.length - 8;
-    const space = H - ground;
+    const space = H - ground - 22; // 맨 아래 AI 제작 고지 자리 비움
     if (space < cardH + 24) return; // 가로로 낮은 화면에서는 생략
     const cx = (W - cardW) / 2, cy = ground + Math.min(space * 0.3, space - cardH - 12);
 
